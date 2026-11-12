@@ -11,25 +11,22 @@ npm run dev                 # http://127.0.0.1:5180
 npm run build && npm run preview   # production build at http://127.0.0.1:5181
 ```
 
-## Real test site — living 2.5D scene (default view)
-The source is `~/ms_demo/WhatsApp Image 2026-11-12 at 8.18.53 PM (1).jpeg`. At 1280×684 it is the highest-resolution original, and no larger copy exists. Offline preparation runs once with `tools/.venv/bin/python tools/prepare_site.py`; nothing runs ML in the browser. It:
-- crops the floodlight bulb strip (top 60 px) and the left 80 px, then applies mild denoise, sharpening and contrast. The result is `public/site/night.jpg`, 1200×624;
-- grades DAY from the night photo, because no day photo exists. The result is `public/site/day.jpg`;
-- computes depth with Depth-Anything-V2-Small (ONNX, onnxruntime, CPU). Depth is corrected to metric scale against the calibrated ground plane, and standing objects take their ground-contact depth. The result is `public/site/depth.png` (16-bit) plus `depth-rg.png` (runtime);
-- fits the camera by least squares from the measured pillar pixels, pillar height (1.5 m, estimate) and P1–P2 distance (24.2 m, estimate). The fit is written to `src/sim/site.calib.json`.
-
-The pipeline cannot do two things with this photo:
-- **Crop out the real drone:** it shares rows y 598–684 with the Point 1 base (y≈636), so cropping it would cut off Point 1.
-- **Level the horizon by resampling:** the image is rotated −19° (roll), and resampling would push Point 1 out of the frame. The horizon is instead levelled in 3D with a roll-free camera.
+## Simulation field (default view)
+The viewport is a fully synthetic aerospace simulation field. No photograph, depth map or calibration is read.
+(The earlier 2.5D photo-scene inputs are archived, unused, in `archive/photo-scene/`, outside `public/`, so they are not bundled.)
 
 `src/components/Scene3D.tsx` renders:
-- the photo as a depth-displaced mesh (512 or 256 segments), with stretched triangles culled and the borders feathered into a photo-matched sky and ground;
-- the procedural X-frame drone (`drone3d.ts`), with the contact shadow and altitude stem;
-- the ground route and CSS2D labels with collision avoidance;
-- the camera director (AUTO, WIDE, FOLLOW, ORBIT, TACTICAL, RESET; drag, wheel, click and double-click);
-- day/night lighting and bloom, plus auto quality (HIGH falls back to LOW below 45 fps).
+- a dark navy sky (vertical gradient shader) with a faint procedural starfield;
+- a glowing cyan perspective dot-grid ground (GPU points; major dots every 5 m), fading toward the horizon and the field edge. There is no fog;
+- radar range rings at 5, 10 and 15 m around the drone's home, with radial ticks every 30° and a slow sweep;
+- two beacons, each a thin light pillar with a base ring and CSS2D label: **POINT 1 — START** (cyan) and **POINT 2 — DESTINATION** (amber), `p1p2DistanceM` 24.2 m apart;
+- the dashed, glowing route between them, labelled "route not flown";
+- the procedural X-frame drone (`drone3d.ts`), with a focal halo, a camera-relative cyan rim light, a viewer-side fill light, boosted LED/strobe glow and bloom. It also gets a contact glow, blob shadow and dashed altitude stem;
+- CSS2D labels with collision avoidance, plus the camera director (AUTO, WIDE, FOLLOW, ORBIT, TACTICAL, RESET; drag, wheel, click and double-click);
+- day/night (day is a lighter deep-blue grid, never a photo), bloom, and auto quality. HIGH falls back to LOW below 45 fps; LOW uses a coarser grid of 1.5 m spacing over a 45 m radius.
 
-The config keys live in `src/sim/site.ts`: `targetAltitudeM` 12, `climbRateMps` 1.5, `pillarHeightM`, `p1p2DistanceM`, `droneDisplayScale`, `launchOffsetM` and `quality`.
+The config keys live in `src/sim/site.ts`: `targetAltitudeM` 12, `climbRateMps` 1.5, `p1p2DistanceM` 24.2, `BEACON_H`, `droneDisplayScale`, `launchOffsetM` and `quality`.
+`window.__aegisScene.env` (DEV only) reports `{kind:'grid', photo:false, fog:false, gridPoints, beacons:{p1,p2}}` for the tests.
 
 ## Mission flow (central state machine: `TRANSITIONS` in `src/sim/engine.ts`)
 ```
@@ -78,7 +75,7 @@ npm run dev &                     # then, in another shell:
 npm run test:e2e                  # real browser, 60 s idle at every waiting stage (~12 min)
 npm run test:takeoff              # takeoff → automatic hold, 60 s stationary, 8 denied commands
 npm run test:restricted           # the 8 restricted buttons (LONG=30 default)
-npm run test:scene                # 2.5D scene: night+day × 1366/1920, screenshots, overlap/calibration/ALT/60 s hold/FPS
+npm run test:scene                # grid scene: night+day × 1366/1920, screenshots (.tests/shots/grid), grid/beacons/no-photo, overlap, ALT, 60 s hold, FPS
 npm run test:layout               # every screen at 1280×720 … 1920×1080 incl. 125/150 % scaling
 IDLE=5 npm run test:e2e           # quick variant
 ```

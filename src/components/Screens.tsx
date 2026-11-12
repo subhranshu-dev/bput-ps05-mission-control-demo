@@ -25,12 +25,12 @@ export function Welcome({ onInitialize }: { onInitialize: () => void }) {
 export function Initializing({ snap, onContinue }: { snap: Snapshot; onContinue: () => void }) {
   const webgl = useMemo(() => { try { const c = document.createElement('canvas'); return !!(c.getContext('webgl2') || c.getContext('webgl')); } catch { return false; } }, []);
   const checks: [string, string][] = snap.site ? [
-    ['Site photograph', `${SITE.photo.width} × ${SITE.photo.height} · static`],
-    ['Depth + calibration', 'offline · P1/P2 anchored'],
+    ['Simulation field', 'procedural dot-grid · synthetic'],
+    ['Grid + beacons', `P1 / P2 · ${SITE.p1p2DistanceM.toFixed(1)} m apart`],
     ['Flight model', `takeoff ${SITE.climbRateMps} m/s · hold`],
     ['Route planner', 'direct P1 → P2'],
     ['Telemetry', '10 Hz'],
-    ['Renderer', webgl ? 'WebGL 2.5D' : 'WebGL unavailable'],
+    ['Renderer', webgl ? 'WebGL 3D' : 'WebGL unavailable'],
   ] : [
     ['Environment generator', `seed ${snap.seed}`],
     ['LiDAR model', `${SENSOR_RANGE} m · ${SCAN_HZ} Hz`],
@@ -66,7 +66,7 @@ export function Initializing({ snap, onContinue }: { snap: Snapshot; onContinue:
           })}
         </ul>
         <div className="card-foot">
-          <span className="muted">{snap.site ? `Real site · Point 1 → Point 2 ${snap.site.distanceM.toFixed(1)} m${snap.site.estimated ? ' (photo estimate)' : ''}` : `${snap.obstacleCount} obstacles · ${snap.totalPoints.toLocaleString()} LiDAR points generated`}</span>
+          <span className="muted">{snap.site ? `Simulation grid · Point 1 → Point 2 ${snap.site.distanceM.toFixed(1)} m` : `${snap.obstacleCount} obstacles · ${snap.totalPoints.toLocaleString()} LiDAR points generated`}</span>
           <Btn variant="primary" onPress={onContinue} disabled={!ready} pointerOnly>CONTINUE <ArrowRight size={15} /></Btn>
         </div>
       </div>
@@ -75,12 +75,12 @@ export function Initializing({ snap, onContinue }: { snap: Snapshot; onContinue:
 }
 
 export function Briefing({ snap, onProceed }: { snap: Snapshot; onProceed: () => void }) {
-  const est = snap.site?.estimated ? ' (photo estimate)' : '';
+  const est = snap.site?.estimated ? ' (estimate)' : '';
   const rows: [string, string][] = snap.site ? [
     ['Objective', `Autonomous takeoff at Point 1 to ${snap.route.cruiseAlt.toFixed(1)} m AGL, then automatic position hold. Point 2 is the navigation reference; the aircraft does not travel there automatically.`],
-    ['Environment', `Real test-site photograph (${SITE.photo.sourceSize.join(' × ')} original) as a 2.5D depth scene — static, not a live feed; DAY view is a grade of the night photo`],
-    ['Start', 'Point 1 — near white pillar (launch position)'],
-    ['Destination', `Point 2 — far white pillar · ${snap.site.distanceM.toFixed(1)} m from Point 1${est}`],
+    ['Environment', 'Synthetic simulation field — procedural dot-grid with two beacons; virtual environment, not a live feed or real imagery'],
+    ['Start', 'Point 1 — cyan beacon (launch position)'],
+    ['Destination', `Point 2 — amber beacon · ${snap.site.distanceM.toFixed(1)} m from Point 1${est}`],
     ['Route', `${snap.waypointCount} waypoint${snap.waypointCount === 1 ? '' : 's'} · direct · ${f1(snap.planLength)} m`],
     ['Altitude', `Takeoff to ${snap.route.cruiseAlt.toFixed(1)} m AGL at ${SITE.climbRateMps} m/s · ceiling ${MAX_ALT} m`],
     ['Manual flight', 'Restricted · commands are denied and the aircraft is held'],

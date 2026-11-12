@@ -329,17 +329,15 @@ test('RESTRICTED: forces hold from TAKEOFF, LANDING, ROUTE_BLOCKED and PAUSED-in
   }
 });
 
-// ---------------------------------------------------------------- real test site (photo) mode
-import { SITE, projectToPhoto, P1W, P2W, LAUNCH } from '../src/sim/site';
+// ---------------------------------------------------------------- simulation-field (site) mode
+import { SITE, P1W, P2W, LAUNCH, BEACON_H } from '../src/sim/site';
 
-test('SITE: calibration — P1/P2 3D anchors reproject onto the measured pillar bases within 6 px', () => {
-  assert.deepEqual(SITE.photo.sourceSize, [1280, 684]);
-  const e1 = projectToPhoto(P1W as [number, number, number])!, e2 = projectToPhoto(P2W as [number, number, number])!;
-  const d1 = Math.hypot(e1.x - SITE.calib.p1.base[0], e1.y - SITE.calib.p1.base[1]);
-  const d2 = Math.hypot(e2.x - SITE.calib.p2.base[0], e2.y - SITE.calib.p2.base[1]);
-  assert.ok(d1 < 6 && d2 < 6, `P1 ${d1.toFixed(2)} px, P2 ${d2.toFixed(2)} px`);
-  assert.ok(Math.abs(Math.hypot(P1W[0] - P2W[0], P1W[2] - P2W[2]) - SITE.p1p2DistanceM) < 0.05, 'P1–P2 distance matches config');
-  // launch point is clear of the Point 1 pole and the drone column never reaches Point 2
+test('SITE: synthetic field geometry — beacons 24.2 m apart, launch clear of the Point 1 beacon', () => {
+  assert.equal(SITE.p1p2DistanceM, 24.2);
+  assert.ok(!('photo' in SITE) && !('calib' in SITE), 'no photo / calibration config remains');
+  assert.ok(Math.abs(Math.hypot(P1W[0] - P2W[0], P1W[2] - P2W[2]) - SITE.p1p2DistanceM) < 1e-9, 'P1–P2 distance matches config');
+  assert.ok(BEACON_H > 1 && BEACON_H < SITE.targetAltitudeM);
+  // launch point is clear of the Point 1 beacon and the drone column never reaches Point 2
   assert.ok(Math.hypot(LAUNCH[0] - P1W[0], LAUNCH[2] - P1W[2]) > 0.8);
   assert.ok(Math.hypot(LAUNCH[0] - P2W[0], LAUNCH[2] - P2W[2]) > 20);
 });

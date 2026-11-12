@@ -1,9 +1,9 @@
-// 2.5D WebGL scene verification: night + day, 1366×768 + 1920×1080, real GPU (ANGLE GL) by default.
-// Requires `npm run dev` on :5180.  Usage: npm run test:scene   (HOLD_S=60, OUT=.tests/shots/scene)
+// Simulation-grid WebGL scene verification: night + day, 1366×768 + 1920×1080, real GPU (ANGLE GL) by default.
+// Requires `npm run dev` on :5180.  Usage: npm run test:scene   (HOLD_S=60, OUT=.tests/shots/grid)
 const { chromium } = require('playwright-core');
 const fs = require('fs');
 const URL = process.env.URL || 'http://127.0.0.1:5180/';
-const OUT = process.env.OUT || '.tests/shots/scene';
+const OUT = process.env.OUT || '.tests/shots/grid';
 const HOLD_S = Number(process.env.HOLD_S || 60);
 const GL = process.env.GL === 'swiftshader' ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : ['--use-angle=gl'];
 const TEN = ['FORWARD', 'BACKWARD', 'LEFT', 'RIGHT', 'YAW LEFT', 'YAW RIGHT', 'ASCEND', 'DESCEND', 'RESUME AUTO', 'PAUSE'];
@@ -25,7 +25,7 @@ const GEOM = () => {
   return {
     host: { x0: host.left, y0: host.top, x1: host.right, y1: host.bottom }, drone: off(S.droneBox), p2: off(S.p2Box), labels,
     toast: R('[data-testid=restricted-alert]'), chip: R('[data-testid=hold-chip]'), tag: R('.vp-tag'), cams: R('.vp-cams'), hud: R('.vp-hud'), tape: R('.alt-tape'),
-    scroll: de.scrollWidth > innerWidth || de.scrollHeight > innerHeight, calib: S.calib, fps: S.fps, quality: S.quality, auto: S.qualityAuto, mode: S.mode,
+    scroll: de.scrollWidth > innerWidth || de.scrollHeight > innerHeight, env: S.env, imgs: [...document.querySelectorAll('img')].map((i) => i.src), tagText: (document.querySelector('.vp-tag') || {}).textContent || '', disc: (document.querySelector('.hud-disc') || {}).textContent || '', fps: S.fps, quality: S.quality, auto: S.qualityAuto, mode: S.mode,
   };
 };
 
@@ -41,6 +41,8 @@ const GEOM = () => {
     const p = await ctx.newPage();
     p.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errs.push(`${tag}: ${m.text()}`); });
     p.on('pageerror', (e) => errs.push(`${tag}: PAGEERROR ${e.message}`));
+    const photoReqs = [];
+    p.on('request', (r) => { if (/\/site\/|ms_demo|\.jpe?g(\?|$)|depth/i.test(r.url())) photoReqs.push(r.url()); });
     const click = (t) => p.locator('button', { hasText: new RegExp(`^\\s*${t}`) }).first().click();
     const E = () => p.evaluate(() => { const e = window.__aegis; return { state: e.state, k: JSON.stringify([e.pos.toArray(), e.heading, e.s, e.routeFlown, e.currentWp, e.vel.toArray()]), t: e.missionTime, alt: e.pos.y }; });
     const park = () => p.mouse.move(40, h - 40); // keep the pointer off the scene (no hover callout)
@@ -52,6 +54,9 @@ const GEOM = () => {
       const fails0 = fails;
       check(`${tag} ${name}: no page scroll`, !g.scroll);
       check(`${tag} ${name}: mode ${mode}`, g.mode === mode);
+      check(`${tag} ${name}: synthetic grid field (no photo / depth / fog), ${g.env.gridPoints} grid points`, g.env.kind === 'grid' && !g.env.photo && !g.env.fog && g.env.gridPoints > 1000 && g.imgs.length === 0 && photoReqs.length === 0, photoReqs.slice(0, 2).join(','));
+      check(`${tag} ${name}: both beacons on screen and labelled`, g.env.beacons.p1 && g.env.beacons.p2 && !!g.labels.p1 && !!g.labels.p2, Object.keys(g.labels).join(','));
+      check(`${tag} ${name}: SIMULATION GRID · SYNTHETIC TELEMETRY disclosure`, g.disc.includes('SIMULATION GRID · SYNTHETIC TELEMETRY') && (name === 'standby' || name === 'countdown' ? g.tagText.includes('SIMULATION GRID · SYNTHETIC TELEMETRY') : true), `${g.tagText} | ${g.disc}`);
       const L = Object.entries(g.labels), pair = [];
       for (let i = 0; i < L.length; i++) for (let j = i + 1; j < L.length; j++) if (hit(L[i][1], L[j][1])) pair.push(`${L[i][0]}×${L[j][0]}`);
       check(`${tag} ${name}: labels do not overlap each other`, pair.length === 0, pair.join(','));
@@ -69,8 +74,8 @@ const GEOM = () => {
     await click('INITIALIZE'); await p.waitForFunction(() => window.__aegis.state === 'READY'); await click('CONTINUE'); await click('PROCEED');
     await p.waitForFunction(() => window.__aegisScene && window.__aegisScene.ready, null, { timeout: 30000 });
     await sleep(2500);
-    const g0 = await p.evaluate(GEOM);
-    check(`${tag} calibration: P1/P2 anchors within 6 px at the photo pose`, g0.calib.p1 < 6 && g0.calib.p2 < 6, `P1 ${g0.calib.p1.toFixed(2)} px · P2 ${g0.calib.p2.toFixed(2)} px`);
+    const logTxt = await p.locator('.log, [class*=log]').first().textContent().catch(() => '');
+    check(`${tag} event log carries SIMULATION GRID · SYNTHETIC TELEMETRY`, logTxt.includes('SIMULATION GRID · SYNTHETIC TELEMETRY'));
     await shot('standby', false);
     await click('START MISSION'); await sleep(1800); await shot('countdown', false);
     await p.waitForFunction(() => window.__aegis.state === 'TAKEOFF', null, { timeout: 30000 });

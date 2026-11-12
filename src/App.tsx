@@ -308,7 +308,7 @@ export default function App() {
                 onQuality={(q, auto) => setQualityNow({ q, auto })} onPreset={(p) => { setPreset(p); setCamToken((x) => x + 1); }} />
               {hold
                 ? <div className="hold-chip" role="status" data-testid="hold-chip"><span className="dot" /><b>MANUAL HOLD</b><span>AUTONOMY SUSPENDED · AIRCRAFT STATIONARY</span></div>
-                : <div className="vp-tag"><span className="dot" />REAL SITE PHOTO · SYNTHETIC TELEMETRY</div>}
+                : <div className="vp-tag"><span className="dot" />SIMULATION GRID · SYNTHETIC TELEMETRY</div>}
               <div className="vp-cams" role="group" aria-label="Camera">
                 {([['WIDE', Layers], ['FOLLOW', Video], ['ORBIT', Orbit], ['TACTICAL', Crosshair]] as const).map(([m, Icon]) => (
                   <button key={m} type="button" className={`seg ${preset === m ? 'on' : ''}`} aria-pressed={preset === m} data-preset={m} title={`${m} camera`}
@@ -322,7 +322,7 @@ export default function App() {
                 <div className="hud-clock mono">T+{fmtClock(snap.missionTime)}</div>
                 <div className="hud-bar"><span style={{ width: `${snap.progress * 100}%` }} /></div>
                 <div className="hud-pct mono">{Math.round(snap.progress * 100)}%</div>
-                <div className="hud-disc" title="Static site photograph — not a live feed. All telemetry is synthetic.">STATIC PHOTO · SYNTHETIC TELEMETRY</div>
+                <div className="hud-disc" title="Synthetic simulation grid — virtual environment, not a live feed. All telemetry is synthetic.">SIMULATION GRID · SYNTHETIC TELEMETRY</div>
               </div>
               {effective === 'COUNTDOWN' && <Countdown value={snap.countdown} paused={st === 'PAUSED'} />}
               {st === 'PAUSED' && effective !== 'COUNTDOWN' && <div className="paused-badge"><Pause size={14} />PAUSED</div>}

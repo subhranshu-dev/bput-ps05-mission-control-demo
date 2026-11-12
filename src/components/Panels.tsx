@@ -76,21 +76,21 @@ const SENSOR_LABEL: Record<Snapshot['sensor'], [string, string]> = {
   IDLE: ['Standby scan', 'muted'], HOLD: ['Held · frozen', 'amber'], SCANNING: ['Scanning · 10 Hz', 'cyan'], STATIONARY: ['Scanning · stationary', 'amber'], FROZEN: ['Frozen (paused)', 'amber'],
 };
 
-/** Real-site geometry: derived from the measured photo points and the engine's authoritative position. */
+/** Simulation-field geometry: configured beacon separation and the engine's authoritative position. */
 export function SitePanel({ snap }: { snap: Snapshot }) {
   const site = snap.site;
   if (!site) return <PerceptionPanel snap={snap} />;
   return (
-    <Panel title="Test site" icon={<MapPin size={15} />} aside={<span className="mono muted">static photo</span>}>
+    <Panel title="Test site" icon={<MapPin size={15} />} aside={<span className="mono muted">simulation grid</span>}>
       <div className="metric-grid">
         <Metric label="Point 1 → Point 2" value={site.distanceM.toFixed(1)} unit="m" tone="cyan" />
         <Metric label="To destination" value={snap.distToGoal.toFixed(1)} unit="m" />
       </div>
       <div className="site-extra">
-        <Row k="Start" v="Point 1 · near pillar" />
-        <Row k="Destination" v="Point 2 · far pillar" />
+        <Row k="Start" v="Point 1 · cyan beacon" />
+        <Row k="Destination" v="Point 2 · amber beacon" />
       </div>
-      <Row k="Distance source" v={site.estimated ? 'Photo estimate' : 'Measured'} tone={site.estimated ? 'amber' : undefined} />
+      <Row k="Distance source" v={site.estimated ? 'Estimate' : 'Configured'} tone={site.estimated ? 'amber' : undefined} />
     </Panel>
   );
 }

@@ -248,7 +248,7 @@ export class Engine {
   animTime = 0;
   steps = 0;
 
-  /** Real site (photo) mode when given a SiteConfig; synthetic generated world when given a seed. */
+  /** Simulation-field (site) mode when given a SiteConfig; synthetic generated world when given a seed. */
   site: SiteConfig | null = null;
   climbV = 0; // takeoff climb speed state (site mode ease-in/out)
   /** Takeoff / cruise altitude: the site's configured target altitude, else the generated-world default. */
@@ -515,7 +515,7 @@ export class Engine {
     this.log = [];
     const w = this.world;
     if (this.site) {
-      this.addLog('ok', `Site ready · Point 1 (start) → Point 2 (destination) · ${this.planLength.toFixed(1)} m${this.site.distanceIsEstimate ? ' (photo estimate)' : ''}`);
+      this.addLog('ok', `Site ready · SIMULATION GRID · SYNTHETIC TELEMETRY · Point 1 (start) → Point 2 (destination) · ${this.planLength.toFixed(1)} m${this.site.distanceIsEstimate ? ' (estimate)' : ''}`);
       this.addLog('info', `Route R1 · direct · takeoff to ${this.cruiseAlt.toFixed(1)} m · then position hold`);
     } else {
       this.addLog('ok', `Environment ready · seed ${w.seed} · ${w.obstacles.length} obstacles · ${w.cloud.count.toLocaleString()} LiDAR points`);

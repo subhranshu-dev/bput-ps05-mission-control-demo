@@ -1,4 +1,4 @@
-// Procedural quadcopter modelled on the team's real drone in the photo (X-frame, dark frame, white props).
+// Procedural quadcopter modelled on a typical X-frame build (X-frame, dark frame, white props).
 // No external assets. Units: metres. Forward = −Z, up = +Y.
 import * as THREE from 'three';
 
