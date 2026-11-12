@@ -38,7 +38,7 @@ export function Panel({ title, icon, aside, children, className = '' }: { title:
     <section className={`panel ${className}`}>
       <header className="panel-h">
         <span className="panel-ic">{icon}</span>
-        <h3 className="panel-t">{title}</h3>
+        <h3 className="panel-t" title={title}>{title}</h3>
         {aside && <span className="panel-aside">{aside}</span>}
       </header>
       <div className="panel-b">{children}</div>

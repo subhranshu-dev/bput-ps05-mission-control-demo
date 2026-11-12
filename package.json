@@ -10,7 +10,10 @@
     "test:unit": "esbuild tests/engine.test.ts --bundle --platform=node --format=esm --outfile=.tests/engine.test.mjs \"--define:import.meta.env.DEV=false\" --log-level=warning && node --test .tests/engine.test.mjs",
     "test:e2e": "node tests/e2e.cjs",
     "test:restricted": "node tests/restricted.cjs",
-    "test:takeoff": "node tests/takeoff-hold.cjs"
+    "test:takeoff": "node tests/takeoff-hold.cjs",
+    "test:site": "node tests/site.cjs",
+    "test:layout": "node tests/layout.cjs",
+    "test:photo": "node tests/photo-view.cjs"
   },
   "dependencies": {
     "@fontsource/inter": "^5.1.0",

@@ -11,6 +11,21 @@ npm run dev                 # http://127.0.0.1:5180
 npm run build && npm run preview   # production build at http://127.0.0.1:5181
 ```
 
+## Real test site (default view)
+The central view shows the landscape photo `~/ms_demo/WhatsApp Image 2026-11-12 at 8.18.53 PM (1).jpeg`, taken side-on at a native 1280×684. It is served at native resolution as `public/site/test-site-landscape.jpg` (JPEG q92), enhanced with Pillow: auto-levels, a highlight roll-off for floodlight glare, mild contrast and colour, and a light unsharp mask. Nothing is added or removed. Everything about the site lives in one config file, `src/sim/site.ts`:
+
+| Key | Value (image px) |
+|---|---|
+| Point 1 (start, near pole) | base (1249, 636), top (1150, 141) |
+| Point 2 (destination, far pole) | base (259, 305), top (242, 250) |
+| `groundAnchor` (drone start / shadow) | (1249, 640) |
+| `altitudePxPerM` | 42 (display scale for the vertical altitude stem; true perspective would put 8 m off-frame) |
+| `climbRateMps` | 1.5 (≈ 5.7 s to 8 m) |
+| `realDroneBox` (our real drone in the photo, never labelled over) | x 640–872, y 598–684 |
+
+- **Distance:** the P1→P2 distance of ≈24.2 m is an estimate from the earlier rear-view photo. Set `MEASURED_DISTANCE_M` once the real distance is measured.
+- **Hold:** takeoff ends in an automatic MANUAL HOLD. All 8 manual buttons, RESUME AUTO and PAUSE show COMMAND DENIED while held, and only RESET leaves the hold. The mission clock T+ keeps running during the hold.
+
 ## Mission flow (central state machine: `TRANSITIONS` in `src/sim/engine.ts`)
 ```
 WELCOME ─INITIALIZE→ INITIALIZING ─(checks done)→ READY ─CONTINUE→ BRIEFING ─PROCEED→ STANDBY
@@ -56,6 +71,11 @@ Keyboard: W/S, A/D and R/F work in MANUAL_HOLD only. Space pauses or resumes, an
 npm run test:unit                 # headless engine tests (node:test), ~25 s
 npm run dev &                     # then, in another shell:
 npm run test:e2e                  # real browser, 60 s idle at every waiting stage (~12 min)
+npm run test:takeoff              # takeoff → automatic hold, 60 s stationary, 8 denied commands
+npm run test:restricted           # the 8 restricted buttons (LONG=30 default)
+npm run test:site                 # native photo, pillar alignment at 5 window sizes × 2 views
+npm run test:photo                # screenshots + drone visibility/overlap/telemetry/10-button checks (OUT=dir)
+npm run test:layout               # every screen at 1280×720 … 1920×1080 incl. 125/150 % scaling
 IDLE=5 npm run test:e2e           # quick variant
 ```
 

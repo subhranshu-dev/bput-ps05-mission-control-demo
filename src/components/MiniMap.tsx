@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Engine, SENSOR_RANGE } from '../sim/engine';
-import { GOAL, START, WORLD_HALF } from '../sim/world';
+import { WORLD_HALF } from '../sim/world';
 
 export default function MiniMap({ engine }: { engine: Engine }) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -17,25 +17,29 @@ export default function MiniMap({ engine }: { engine: Engine }) {
       const W = cv.clientWidth, H = cv.clientHeight;
       if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      const S = Math.min(W, H) / (WORLD_HALF * 2 + 8);
-      const ox = W / 2, oy = H / 2;
+      // map extents: the real site's bounds in site mode, the generated arena otherwise
+      const b = engine.site ? engine.site.bounds : { minX: -WORLD_HALF, maxX: WORLD_HALF, minZ: -WORLD_HALF, maxZ: WORLD_HALF };
+      const bw = b.maxX - b.minX, bh = b.maxZ - b.minZ;
+      const S = Math.min(W / (bw + 4), H / (bh + 4));
+      const ox = W / 2 - ((b.minX + b.maxX) / 2) * S, oy = H / 2 - ((b.minZ + b.maxZ) / 2) * S;
       const X = (x: number) => ox + x * S;
       const Y = (z: number) => oy + z * S;
       ctx.clearRect(0, 0, W, H);
-      // grid
+      // grid (5 m on the site, 20 m on the generated arena)
+      const step = engine.site ? 5 : 20;
       ctx.strokeStyle = 'rgba(47,212,255,0.07)';
       ctx.lineWidth = 1;
-      for (let g = -WORLD_HALF; g <= WORLD_HALF; g += 20) {
-        ctx.beginPath(); ctx.moveTo(X(g), Y(-WORLD_HALF)); ctx.lineTo(X(g), Y(WORLD_HALF)); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(X(-WORLD_HALF), Y(g)); ctx.lineTo(X(WORLD_HALF), Y(g)); ctx.stroke();
-      }
+      for (let g = Math.ceil(b.minX / step) * step; g <= b.maxX; g += step) { ctx.beginPath(); ctx.moveTo(X(g), Y(b.minZ)); ctx.lineTo(X(g), Y(b.maxZ)); ctx.stroke(); }
+      for (let g = Math.ceil(b.minZ / step) * step; g <= b.maxZ; g += step) { ctx.beginPath(); ctx.moveTo(X(b.minX), Y(g)); ctx.lineTo(X(b.maxX), Y(g)); ctx.stroke(); }
       ctx.strokeStyle = 'rgba(47,212,255,0.35)';
-      ctx.strokeRect(X(-WORLD_HALF), Y(-WORLD_HALF), WORLD_HALF * 2 * S, WORLD_HALF * 2 * S);
+      ctx.strokeRect(X(b.minX), Y(b.minZ), bw * S, bh * S);
       const p = engine.pos;
-      // sensor range
-      ctx.fillStyle = 'rgba(47,212,255,0.06)';
-      ctx.beginPath(); ctx.arc(X(p.x), Y(p.z), SENSOR_RANGE * S, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = 'rgba(47,212,255,0.25)'; ctx.stroke();
+      if (!engine.site) {
+        // sensor range (generated environment only — no synthetic LiDAR on the real site)
+        ctx.fillStyle = 'rgba(47,212,255,0.06)';
+        ctx.beginPath(); ctx.arc(X(p.x), Y(p.z), SENSOR_RANGE * S, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = 'rgba(47,212,255,0.25)'; ctx.stroke();
+      }
       // obstacles
       const inR = new Map(engine.inRange.map((r) => [r.o.id, r.d]));
       for (const o of engine.world.obstacles) {
@@ -74,8 +78,16 @@ export default function MiniMap({ engine }: { engine: Engine }) {
         ctx.beginPath(); trail.forEach(([x, z], i) => (i ? ctx.lineTo(X(x), Y(z)) : ctx.moveTo(X(x), Y(z)))); ctx.stroke();
       }
       // pads
-      ctx.strokeStyle = '#3ee08f'; ctx.beginPath(); ctx.arc(X(START.x), Y(START.z), 4, 0, Math.PI * 2); ctx.stroke();
-      ctx.strokeStyle = '#ffb547'; ctx.beginPath(); ctx.arc(X(GOAL.x), Y(GOAL.z), 4, 0, Math.PI * 2); ctx.stroke();
+      const sp = engine.startPt, gp = engine.goalPt;
+      ctx.lineWidth = 1.6;
+      ctx.strokeStyle = '#38d6f5'; ctx.beginPath(); ctx.arc(X(sp.x), Y(sp.z), 6, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = '#fbbf24'; ctx.beginPath(); ctx.arc(X(gp.x), Y(gp.z), 6, 0, Math.PI * 2); ctx.stroke();
+      if (engine.site) {
+        ctx.font = '600 10.5px "JetBrains Mono", monospace';
+        ctx.fillStyle = '#38d6f5'; ctx.fillText('P1 START', X(sp.x) + 10, Y(sp.z) + 4);
+        ctx.fillStyle = '#fbbf24'; ctx.fillText('P2 DEST', X(gp.x) + 10, Y(gp.z) + 4);
+        ctx.fillStyle = 'rgba(180,195,210,0.7)'; ctx.fillText(`${engine.site.distanceM.toFixed(1)} m${engine.site.distanceIsEstimate ? ' est.' : ''}`, X(0) - 70, Y((sp.z + gp.z) / 2));
+      }
       // drone
       ctx.save();
       ctx.translate(X(p.x), Y(p.z));
@@ -85,7 +97,7 @@ export default function MiniMap({ engine }: { engine: Engine }) {
       ctx.restore();
       // north
       ctx.fillStyle = 'rgba(200,220,240,0.6)'; ctx.font = '600 11px "JetBrains Mono", monospace';
-      ctx.fillText('N ↑', W - 26, 15);
+      ctx.fillText(engine.site ? '↑ P2' : 'N ↑', W - 34, 15);
     };
     draw();
     const offFrame = engine.onFrame((dt) => { acc += dt; if (acc >= 1 / 15) { acc = 0; draw(); } });

@@ -49,7 +49,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   r = await idle('READY'); await keys('Enter', 4);
   check(`4 READY waits ${IDLE / 1000}s + Enter (needs CONTINUE)`, (await state()) === 'READY');
   await btn('CONTINUE').click();
-  const briefWps = await p.evaluate(() => Number(/(\d+) waypoints/.exec(document.body.textContent)[1]));
+  const briefWps = await p.evaluate(() => Number(/(\d+) waypoints?/.exec(document.body.textContent)[1]));
   r = await idle('BRIEFING'); await keys('Enter', 4);
   check(`5 BRIEFING waits ${IDLE / 1000}s + Enter (needs PROCEED)`, (await state()) === 'BRIEFING');
   await btn('PROCEED').click();
@@ -59,9 +59,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // 6 standby stationary
   r = await idle('STANDBY'); await keys('Enter', 4); await keys(' ', 4);
   check(`6 STANDBY stationary ${IDLE / 1000}s (+Enter/Space)`, (await state()) === 'STANDBY' && r.a.k === r.z.k && r.z.missionTime === 0 && r.z.pos.z === 0 && r.a.scans === r.z.scans);
-  // 15 route consistency briefing ↔ dashboard ↔ 3D labels ↔ map
-  const wpDom = await p.evaluate(() => ({ labels: document.querySelectorAll('.tag-wp').length, nav: document.querySelector('.panel .row-v') && [...document.querySelectorAll('.row')].find((x) => x.textContent.startsWith('Route')).textContent }));
-  check('15 waypoint count identical: briefing / engine / 3D labels / nav', briefWps === r.z.waypointCount && wpDom.labels === r.z.waypointCount && wpDom.nav.includes(`${r.z.waypointCount} WP`), `brief ${briefWps} engine ${r.z.waypointCount} labels ${wpDom.labels} nav "${wpDom.nav}"`);
+  // 15 route consistency briefing ↔ engine ↔ photo overlay ↔ nav panel
+  const wpDom = await p.evaluate(() => ({ dest: document.querySelectorAll('[data-testid=point2]').length, nav: [...document.querySelectorAll('.row')].find((x) => x.textContent.startsWith('Route')).textContent }));
+  check('15 waypoint count identical: briefing / engine / photo overlay / nav', briefWps === r.z.waypointCount && wpDom.dest === r.z.waypointCount && wpDom.nav.includes(`${r.z.waypointCount} WP`), `brief ${briefWps} engine ${r.z.waypointCount} overlay ${wpDom.dest} nav "${wpDom.nav}"`);
   await p.evaluate(() => [...document.querySelectorAll('button')].find((x) => x.textContent.includes('START MISSION')).focus());
   await keys('Enter', 2); await keys(' ', 2);
   check('   START MISSION refuses keyboard activation', (await state()) === 'STANDBY');
@@ -76,58 +76,35 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('7 countdown starts once (double click + extra click ignored)', (await state()) === 'COUNTDOWN' && c2 < c1 && c1 <= 5, `${c1.toFixed(2)} → ${c2.toFixed(2)}`);
   // 8 takeoff after countdown
   check('8 TAKEOFF follows countdown', await waitState('TAKEOFF', 15000));
-  check('   takeoff → automatic MANUAL_HOLD', await waitState('MANUAL_HOLD', 30000));
-  await p.locator('[data-testid=hold-banner] button').click(); // explicit RESUME AUTO
-  check('   RESUME AUTO → AUTONOMOUS_TRANSIT', (await state()) === 'AUTONOMOUS_TRANSIT');
-  await shot('transit');
-  // 9 + 14 flight consistency
-  const sm = [];
-  for (let i = 0; i < 25; i++) { sm.push(await S()); await sleep(200); }
-  const tr = sm.filter((x) => x.state === 'AUTONOMOUS_TRANSIT');
-  let okK = true, okP = true;
-  for (let i = 1; i < tr.length; i++) {
-    const a = tr[i - 1], c = tr[i]; const dt = c.missionTime - a.missionTime;
-    if (dt > 0.05) { const pa = JSON.parse(a.k)[0], pc = JSON.parse(c.k)[0]; const v = Math.hypot(pc[0] - pa[0], pc[2] - pa[2]) / dt; if (Math.abs(v - (a.groundSpeed + c.groundSpeed) / 2) > 0.4) okK = false; }
-    if (c.remaining > a.remaining + 1e-9 || c.progress < a.progress - 1e-12 || Math.abs(c.progress - c.routeFlown / (c.routeFlown + c.remaining)) > 1e-9) okP = false;
-    if (c.groundSpeed > 6.0001 || c.heading < 0 || c.heading > 359) okK = false;
-  }
-  check(`9 position/speed consistent over ${tr.length} samples`, tr.length > 10 && okK);
-  check('14 progress ↑ / remaining ↓ / progress = flown/(flown+left)', okP);
-  // 13 pause
+  // 13 pause during the climb freezes everything; resume continues the climb
+  await sleep(800);
   await btn('PAUSE').click();
   r = await idle('PAUSED');
-  check(`13 PAUSED ${IDLE / 1000}s: position, clock, scans frozen; speed 0`, r.z.state === 'PAUSED' && r.a.k === r.z.k && r.a.missionTime === r.z.missionTime && r.a.scans === r.z.scans && r.z.groundSpeed === 0 && r.z.sensor === 'FROZEN');
+  check(`13 PAUSED ${IDLE / 1000}s mid-climb: position, clock frozen; speeds 0`, r.z.state === 'PAUSED' && r.a.k === r.z.k && r.a.missionTime === r.z.missionTime && r.z.groundSpeed === 0 && r.z.vz === 0 && r.z.sensor === 'FROZEN');
   await btn('RESUME').click();
-  check('   RESUME → AUTONOMOUS_TRANSIT', (await state()) === 'AUTONOMOUS_TRANSIT');
-  // 10–11 manual hold
-  await btn('HOLD').click();
+  check('   RESUME → TAKEOFF (previous state)', (await state()) === 'TAKEOFF');
+  check('   takeoff → automatic MANUAL_HOLD', await waitState('MANUAL_HOLD', 30000));
   await sleep(500);
-  const banner = await p.locator('[data-testid=hold-banner]').isVisible();
+  const chip = await p.locator('[data-testid=hold-chip]').textContent();
+  // 10–11 the post-takeoff hold
   r = await idle('MANUAL_HOLD');
-  check(`10 MANUAL_HOLD ${IDLE / 1000}s: position/alt/progress frozen, velocity 0`, r.z.state === 'MANUAL_HOLD' && r.a.k === r.z.k && r.z.groundSpeed === 0 && r.z.vz === 0 && r.a.progress === r.z.progress);
-  check('11 hold freezes LiDAR (returns, map, scans) and the mission clock', r.a.pointsInRange === r.z.pointsInRange && r.a.pointsMapped === r.z.pointsMapped && r.a.scans === r.z.scans && r.z.sensor === 'HOLD' && r.z.missionTime === r.a.missionTime,
-    `returns ${r.a.pointsInRange}→${r.z.pointsInRange} mapped ${r.a.pointsMapped}→${r.z.pointsMapped} sensor ${r.z.sensor} T ${r.a.missionTime.toFixed(1)}→${r.z.missionTime.toFixed(1)}`);
-  check('   hold is announced: banner with RESUME AUTO visible, reminder logged', banner && (await p.evaluate(() => window.__aegis.log.some((l) => l.msg.includes('press RESUME AUTO')))));
-  check('   RECALCULATE disabled in hold (RESUME AUTO replans)', await btn('RECALCULATE').isDisabled());
+  check(`10 MANUAL_HOLD ${IDLE / 1000}s after takeoff: position/alt/progress frozen, velocity 0`, r.z.state === 'MANUAL_HOLD' && r.a.k === r.z.k && r.z.groundSpeed === 0 && r.z.vz === 0 && r.a.progress === r.z.progress && r.z.progress === 0 && r.z.pos.z === 8);
+  check('11 hold: mission clock T+ keeps running, sensor shown as held', r.z.missionTime > r.a.missionTime + IDLE / 1000 - 1 && r.z.sensor === 'HOLD');
+  check('   hold shown as a compact chip', chip.includes('MANUAL HOLD') && chip.includes('AIRCRAFT STATIONARY'));
+  check('   in hold START, RECALCULATE and NEW ENVIRONMENT are disabled; RESET available', (await btn('START MISSION').isDisabled()) && (await btn('RECALCULATE').isDisabled()) && (await btn('NEW ENVIRONMENT').isDisabled()) && !(await btn('RESET').isDisabled()));
   await shot('hold');
-  // 12 resume
-  const f0 = (await S()).routeFlown;
-  await p.locator('[data-testid=hold-banner] button').click();
-  await p.waitForFunction((f) => window.__aegis.routeFlown > f + 5, f0, { timeout: 60000 }).catch(() => {});
-  const s12 = await S();
-  const labels12 = await p.evaluate(() => document.querySelectorAll('.tag-wp').length);
-  check('12 RESUME AUTO restarts navigation on revised route', s12.state === 'AUTONOMOUS_TRANSIT' && s12.routeFlown > f0 + 5 && s12.route.rev === 3, `flown +${(s12.routeFlown - f0).toFixed(1)} m, R${s12.route.rev}`);
-  check('15 revised route shared by engine / 3D labels / nav panel', labels12 === s12.waypointCount && (await p.evaluate(() => [...document.querySelectorAll('.row')].find((x) => x.textContent.startsWith('Route')).textContent)).startsWith(`RouteR3`));
-  // blocked route (obstacle injected through the dev hook) — must not freeze silently
-  await p.evaluate(() => { const e = window.__aegis; const q = { x: 0, y: 0, z: 0 }; const v = e.pos.clone(); e.pathPoint(Math.min(e.planLength, e.s + 14), v); e.world.obstacles.push({ id: 'OB-99', kind: 'PILLAR', x: v.x, z: v.z, rot: 0, shape: 'circle', hw: 0, hd: 0, r: 1.5, h: 40, parts: [] }); });
-  check('   injected obstacle → ROUTE_BLOCKED', await waitState('ROUTE_BLOCKED', 15000));
-  r = await idle('ROUTE_BLOCKED');
-  const bText = await p.locator('[data-testid=blocked-banner]').textContent();
-  check(`   ROUTE_BLOCKED ${IDLE / 1000}s: stationary, banner names OB-99, offers RECALCULATE`, r.z.state === 'ROUTE_BLOCKED' && r.a.k === r.z.k && bText.includes('OB-99') && bText.includes('RECALCULATE'));
-  await shot('blocked');
-  await p.locator('[data-testid=blocked-banner] button', { hasText: 'RECALCULATE' }).click();
-  check('   RECALCULATE recovers → AUTONOMOUS_TRANSIT', (await state()) === 'AUTONOMOUS_TRANSIT');
-  await p.evaluate(() => { const o = window.__aegis.world.obstacles; o.splice(o.findIndex((x) => x.id === 'OB-99'), 1); }); // remove test-only obstacle
+  // 9 one telemetry source
+  const tele = await p.evaluate(() => ({ tape: document.querySelector('.alt-ptr b').textContent, panel: document.querySelector('.pos.alt b').textContent, label: [...document.querySelectorAll('[data-ov=label-drone] text')].map((t) => t.textContent).join(' '), stem: document.querySelector('[data-ov=label-stem] text').textContent }));
+  check('9 tape / panel / drone label / stem tag show identical altitude', tele.tape === '8.0' && tele.panel === '8.0' && tele.label.includes('ALT 8.0 m') && tele.stem === '8.0 m', JSON.stringify(tele));
+  // 12 RESUME AUTO, PAUSE and Space are denied while held
+  const k0 = (await S()).k;
+  const deny = async (sel) => { await p.locator(sel).click(); return (await p.locator('[data-testid=restricted-alert]').textContent({ timeout: 1500 }).catch(() => '')).includes('COMMAND DENIED'); };
+  const d1 = await deny('button[data-cmd="RESUME AUTO"]');
+  const d2 = await deny('button[data-cmd="PAUSE"]');
+  await p.mouse.click(5, 300); await keys(' ', 2);
+  await sleep(1500);
+  const k1 = await S();
+  check('12 RESUME AUTO, PAUSE and Space show COMMAND DENIED; aircraft stays held, unmoved', d1 && d2 && k1.state === 'MANUAL_HOLD' && k1.k === k0);
   // 16 reset
   await btn('RESET').click();
   const z0 = await S();
@@ -136,16 +113,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check(`   no old timer continues (${IDLE / 1000}s)`, r.z.state === 'STANDBY' && r.a.k === r.z.k && r.z.missionTime === 0);
   // 17 second mission
   await btn('START MISSION').click();
-  await waitState('MANUAL_HOLD', 60000);
-  await p.locator('[data-testid=hold-banner] button').click();
-  let early = false; const t0 = Date.now();
-  while (Date.now() - t0 < 240000) { const x = await S(); if ((x.state === 'LANDING' && x.s_ < x.L - 1e-6) || (x.state === 'COMPLETE' && x.pos.z > 0)) early = true; if (x.state === 'COMPLETE') break; await sleep(250); }
-  const fin = await S();
-  if (fin.state !== 'COMPLETE') console.log('   second mission ended in', fin.state, fin.blocked);
-  check('17 second mission completes cleanly (landing after route end, complete at touchdown)', fin.state === 'COMPLETE' && !early && fin.progress === 1);
-  r = await idle('COMPLETE');
-  check(`   COMPLETE stays ${IDLE / 1000}s; only RESET enabled`, r.z.state === 'COMPLETE' && (await btn('START MISSION').isDisabled()) && (await btn('NEW ENVIRONMENT').isDisabled()) && !(await btn('RESET').isDisabled()));
-  await shot('complete');
+  const ok17 = await waitState('MANUAL_HOLD', 60000);
+  await sleep(500);
+  const h2 = await S();
+  r = await idle('second hold');
+  check('17 second mission: countdown → takeoff → automatic hold again at 8 m, stationary', ok17 && h2.pos.z === 8 && h2.pos.x === 0 && h2.pos.y === 0 && r.a.k === r.z.k && r.z.state === 'MANUAL_HOLD');
   // 18 duplicate timers / loops
   const ints = await p.evaluate(() => window.__intervals());
   const lpf = await loopsPerFrame();

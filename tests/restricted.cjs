@@ -1,10 +1,11 @@
-// Browser test for the eight restricted manual flight controls. Requires `npm run dev` on :5180.
+// Browser test for the ten restricted controls (8 manual flight + RESUME AUTO + PAUSE while held). Requires `npm run dev` on :5180.
 // Usage: npm run test:restricted    (LONG=30 s by default; set LONG=5 for a quick run)
 const { chromium } = require('playwright-core');
 const URL = process.env.URL || 'http://127.0.0.1:5180/';
 const LONG = Number(process.env.LONG || 30) * 1000;
 const OUT = process.env.OUT || '';
-const BUTTONS = ['FORWARD', 'BACKWARD', 'LEFT', 'RIGHT', 'YAW LEFT', 'YAW RIGHT', 'ASCEND', 'DESCEND'];
+const FLIGHT8 = ['FORWARD', 'BACKWARD', 'LEFT', 'RIGHT', 'YAW LEFT', 'YAW RIGHT', 'ASCEND', 'DESCEND'];
+const BUTTONS = [...FLIGHT8, 'RESUME AUTO', 'PAUSE'];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const rows = []; let fails = 0;
 const check = (name, ok, detail = '') => { if (!ok) fails++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`); return !!ok; };
@@ -16,7 +17,7 @@ const check = (name, ok, detail = '') => { if (!ok) fails++; console.log(`${ok ?
   p.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errs.push(m.text()); });
   p.on('pageerror', (e) => errs.push('PAGEERROR ' + e.message));
   // frozen-state fingerprint: every authoritative flight value incl. clock and LiDAR
-  const F = () => p.evaluate(() => { const e = window.__aegis, s = e.snapshot(); return { state: e.state, pos: e.pos.toArray(), heading: e.heading, hdg: s.heading, alt: s.pos.z, gs: s.groundSpeed, vz: s.vz, yaw: s.yawRate, prog: s.progress, wp: e.currentWp, s: e.s, t: e.missionTime, scans: e.scans, k: JSON.stringify([e.pos.toArray(), e.heading, e.s, e.routeFlown, e.currentWp, e.missionTime, e.vel.toArray(), e.yawRate, e.scans, e.pointsMapped]), denied: e.deniedCount, log0: e.log[0].msg }; });
+  const F = () => p.evaluate(() => { const e = window.__aegis, s = e.snapshot(); return { state: e.state, pos: e.pos.toArray(), heading: e.heading, hdg: s.heading, alt: s.pos.z, gs: s.groundSpeed, vz: s.vz, yaw: s.yawRate, prog: s.progress, wp: e.currentWp, s: e.s, t: e.missionTime, scans: e.scans, k: JSON.stringify([e.pos.toArray(), e.heading, e.s, e.routeFlown, e.currentWp, e.vel.toArray(), e.yawRate, e.scans, e.pointsMapped]), denied: e.deniedCount, log0: e.log[0].msg }; });
   const state = () => p.evaluate(() => window.__aegis.state);
   const waitState = async (w, ms = 60000) => { const t = Date.now(); while (Date.now() - t < ms) { if ((await state()) === w) return true; await sleep(120); } return false; };
   const click = (t) => p.locator('button', { hasText: new RegExp(`^\\s*${t}`) }).first().click();
@@ -25,13 +26,12 @@ const check = (name, ok, detail = '') => { if (!ok) fails++; console.log(`${ok ?
 
   await p.goto(URL); await p.waitForFunction(() => !!window.__aegis);
   await click('INITIALIZE'); await waitState('READY'); await click('CONTINUE'); await click('PROCEED');
-  check('restricted buttons disabled on the pad (STANDBY)', (await Promise.all(BUTTONS.map((c) => rxBtn(c).isDisabled()))).every(Boolean));
-  await click('START MISSION'); await waitState('MANUAL_HOLD');
-  await p.locator('[data-testid=hold-banner] button').click(); // explicit RESUME AUTO so each button is tested while moving
+  check('manual flight buttons disabled on the pad (STANDBY)', (await Promise.all(FLIGHT8.map((c) => rxBtn(c).isDisabled()))).every(Boolean));
+  await click('START MISSION');
+  // FORWARD is pressed while actually climbing (TAKEOFF): it must freeze the aircraft in MANUAL_HOLD mid-climb.
+  await p.waitForFunction(() => window.__aegis.state === 'TAKEOFF' && window.__aegis.pos.y > 1.5, null, { timeout: 60000 });
 
   for (const cmd of BUTTONS) {
-    // fly (moving) before each test
-    await p.waitForFunction(() => window.__aegis.state === 'AUTONOMOUS_TRANSIT' && window.__aegis.snapshot().groundSpeed > 1, null, { timeout: 30000 });
     const pre = await F();
     await rxBtn(cmd).click();
     const s0 = await F();
@@ -59,18 +59,15 @@ const check = (name, ok, detail = '') => { if (!ok) fails++; console.log(`${ok ?
     };
     const ok = Object.values(r).every(Boolean);
     rows.push([cmd, r, latency]);
-    check(`button ${cmd.padEnd(9)} → denied, MANUAL_HOLD, frozen 0/3/${LONG / 1000} s`, ok,
-      `${Object.entries(r).filter(([, v]) => !v).map(([k]) => k).join(',') || 'all 12 checks'} · pre-click→hold ${latency.toFixed(2)} m (click latency while flying)`);
+    check(`button ${cmd.padEnd(11)} → denied, MANUAL_HOLD, frozen 0/3/${LONG / 1000} s`, ok,
+      `${Object.entries(r).filter(([, v]) => !v).map(([k]) => k).join(',') || 'all 12 checks'} · pre-click→hold ${latency.toFixed(2)} m (click latency while climbing)`);
     if (OUT && cmd === 'FORWARD') { await rxBtn('FORWARD').click(); await sleep(450); await p.screenshot({ path: `${OUT}/rx-alert.png` }); await sleep(3200); }
-    // explicit, authorised exit for the next test
-    await p.locator('[data-testid=hold-banner] button').click();
   }
 
   // rapid repeated clicks (buttons + keys) while held
-  await p.waitForFunction(() => window.__aegis.state === 'AUTONOMOUS_TRANSIT' && window.__aegis.snapshot().groundSpeed > 1, null, { timeout: 30000 });
   await rxBtn('ASCEND').click();
   const r0 = await F();
-  for (let i = 0; i < 40; i++) await rxBtn(BUTTONS[i % 8]).click({ delay: 0 });
+  for (let i = 0; i < 40; i++) await rxBtn(BUTTONS[i % BUTTONS.length]).click({ delay: 0 });
   for (const k of ['w', 's', 'q', 'e', 'a', 'd', 'r', 'f', 'w', 'w']) await p.keyboard.press(k);
   const alerts = await p.locator('[data-testid=restricted-alert]').count();
   await sleep(3500);

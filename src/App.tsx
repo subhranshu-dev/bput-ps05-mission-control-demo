@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Activity, ArrowDown, ArrowUp, ChevronsDown, ChevronsUp, Clock, Focus, Hand, Layers, Lock,
-  Map as MapIcon, Maximize2, Minimize2, Orbit, Pause, Play, RotateCcw, RotateCw, Route, ScrollText,
-  ShieldAlert, Shuffle, Target, Video, Volume2, VolumeX, X, Navigation, ArrowLeft, ArrowRight, OctagonAlert,
+  Activity, ArrowDown, ArrowUp, ChevronsDown, ChevronsUp, Clock, Hand, Layers, Lock,
+  Map as MapIcon, Maximize2, Minimize2, Pause, Play, RotateCcw, RotateCw, Route, ScrollText,
+  ShieldAlert, Shuffle, Target, Volume2, VolumeX, X, Navigation, ArrowLeft, ArrowRight, OctagonAlert,
 } from 'lucide-react';
-import Scene, { CamMode } from './components/Scene';
+import PhotoScene, { PhotoView } from './components/PhotoScene';
+import { SITE } from './sim/site';
 import MiniMap from './components/MiniMap';
 import { Btn, Logo, Metric, f1, fmtClock } from './components/ui';
 import { Briefing, Initializing, Welcome, missionId } from './components/Screens';
-import { EventLog, FlightPanel, NavPanel, PerceptionPanel, STATE_LABEL, STATE_TONE, Timeline } from './components/Panels';
+import { EventLog, FlightPanel, NavPanel, SitePanel, STATE_LABEL, STATE_TONE, Timeline } from './components/Panels';
 import { Action, DASHBOARD_STATES, Engine, LogEntry, RestrictedCommand, Snapshot, Trigger, WARN_DIST } from './sim/engine';
 import { sfx } from './audio';
 
@@ -18,7 +19,7 @@ function useEngineSnapshot(engine: Engine) {
   const [log, setLog] = useState<LogEntry[]>(() => engine.log.slice(0, 80));
   useEffect(() => {
     const refresh = () => { setSnap(engine.snapshot()); setLog(engine.log.slice(0, 80)); };
-    const id = window.setInterval(refresh, 100); // 10 Hz telemetry display
+    const id = window.setInterval(refresh, 50); // 20 Hz — the single telemetry source for every panel and overlay
     const off = engine.on((e) => { if (e.type === 'state' || e.type === 'reset') refresh(); });
     return () => { clearInterval(id); off(); };
   }, [engine]);
@@ -103,12 +104,29 @@ function CompleteCard({ snap, onClose }: { snap: Snapshot; onClose: () => void }
   );
 }
 
+/** Altitude tape (0–20 m) driven by the authoritative altitude. */
+function AltitudeTape({ alt, target, vz }: { alt: number; target: number; vz: number }) {
+  const max = 20, pct = (v: number) => `${100 - (Math.min(max, Math.max(0, v)) / max) * 100}%`;
+  return (
+    <div className="alt-tape" aria-label={`Altitude ${alt.toFixed(1)} metres`}>
+      <div className="alt-h">ALT</div>
+      <div className="alt-scale">
+        {[0, 5, 10, 15, 20].map((m) => <div key={m} className="alt-tick" style={{ top: pct(m) }}><span>{m}</span></div>)}
+        <div className="alt-target" style={{ top: pct(target) }} title={`Target ${target.toFixed(1)} m`} />
+        <div className="alt-fill" style={{ top: pct(alt) }} />
+        <div className="alt-ptr" style={{ top: pct(alt) }}><b className="mono">{alt.toFixed(1)}</b></div>
+      </div>
+      <div className="alt-f mono">{vz > 0.05 ? '▲' : vz < -0.05 ? '▼' : '■'} {Math.abs(vz).toFixed(1)}</div>
+    </div>
+  );
+}
+
 /** Red COMMAND DENIED alert for restricted manual flight commands (UI only; ~3 s; never touches the engine). */
 function RestrictedAlert({ cmd, leaving, count }: { cmd: string; leaving: boolean; count: number }) {
   return (
-    <div className={`rx-alert ${leaving ? 'out' : ''}`} role="alert" aria-live="assertive" data-testid="restricted-alert">
+    <div className={`rx-alert rx-toast ${leaving ? 'out' : ''}`} role="alert" aria-live="assertive" data-testid="restricted-alert">
       <div className="rx-scan" aria-hidden="true" />
-      <div className="rx-icon"><OctagonAlert size={34} strokeWidth={1.8} /></div>
+      <div className="rx-icon"><OctagonAlert size={24} strokeWidth={1.8} /></div>
       <div className="rx-text">
         <div className="rx-l1">COMMAND DENIED</div>
         <div className="rx-l2">CONTROL AUTHORIZATION FAILURE</div>
@@ -121,12 +139,13 @@ function RestrictedAlert({ cmd, leaving, count }: { cmd: string; leaving: boolea
 
 // ---------------------------------------------------------------- app
 /** Keyboard shortcuts for the restricted commands — routed to the same denial handler. */
+type DeniableCommand = RestrictedCommand | 'RESUME AUTO' | 'PAUSE';
 const KEYMAP: Record<string, RestrictedCommand> = { w: 'FORWARD', s: 'BACKWARD', q: 'LEFT', e: 'RIGHT', a: 'YAW LEFT', d: 'YAW RIGHT', r: 'ASCEND', f: 'DESCEND' };
 const ALERT_MS = 3000;
 const ALERT_EXIT_MS = 350;
 
 export default function App() {
-  const engine = useMemo(() => new Engine(2205), []);
+  const engine = useMemo(() => new Engine(SITE), []); // real test-site mode
   useEffect(() => {
     engine.start();
     if (import.meta.env.DEV) (window as unknown as { __aegis: Engine }).__aegis = engine;
@@ -136,7 +155,7 @@ export default function App() {
   const { snap, log } = useEngineSnapshot(engine);
   const [fs, setFs] = useState(false);
   const [muted, setMuted] = useState(false);
-  const [camMode, setCamMode] = useState<CamMode>('follow');
+  const [photoView, setPhotoView] = useState<PhotoView>('full');
   const [camToken, setCamToken] = useState(0);
   const [denied, setDenied] = useState<string | null>(null);
   const [summaryClosed, setSummaryClosed] = useState(false);
@@ -191,7 +210,7 @@ export default function App() {
    * The engine forces MANUAL_HOLD and freezes the flight state; nothing here can move the aircraft.
    * The alert timers below only hide the notification — they never call the engine.
    */
-  const handleRestrictedFlightCommand = useCallback((cmd: RestrictedCommand) => {
+  const handleRestrictedFlightCommand = useCallback((cmd: DeniableCommand) => {
     if (!engine.restrictedAvailable()) return;
     engine.handleRestrictedFlightCommand(cmd);
     sfx.deny();
@@ -230,7 +249,8 @@ export default function App() {
       if (key === ' ') {
         if (tag === 'BUTTON' || tag === 'A') return; // let the focused control handle it natively
         e.preventDefault();
-        if (engine.allowed('RESUME')) engine.dispatch('RESUME');
+        if (engine.site && engine.state === 'MANUAL_HOLD') handleRestrictedFlightCommand('PAUSE'); // hold: denied
+        else if (engine.allowed('RESUME')) engine.dispatch('RESUME');
         else if (engine.allowed('PAUSE')) engine.dispatch('PAUSE');
         return; // Space never starts a mission
       }
@@ -261,38 +281,34 @@ export default function App() {
           <aside className="col left" aria-label="Flight data">
             <FlightPanel snap={snap} />
             <NavPanel snap={snap} />
-            <PerceptionPanel snap={snap} />
+            <SitePanel snap={snap} />
           </aside>
 
           <section className="center" aria-label="3D environment">
             <div className="viewport">
-              <Scene engine={engine} camMode={camMode} camResetToken={camToken} />
-              <div className="vp-tag"><span className="dot" />SYNTHETIC LiDAR · VIRTUAL ENVIRONMENT</div>
-              <div className="vp-cams" role="group" aria-label="Camera">
-                {([['follow', 'Follow', Video], ['orbit', 'Orbit', Orbit], ['top', 'Top', Layers]] as const).map(([m, l, Icon]) => (
-                  <button key={m} type="button" className={`seg ${camMode === m ? 'on' : ''}`} aria-pressed={camMode === m} title={`${l} camera`}
-                    onClick={(e) => { if (e.detail) e.currentTarget.blur(); setCamMode(m); setCamToken((x) => x + 1); }}><Icon size={14} />{l}</button>
+              <div className="photo-backdrop" style={{ backgroundImage: `url(${SITE.photo.src})` }} aria-hidden="true" />
+              <PhotoScene snap={snap} view={photoView} resetToken={camToken} />
+              {hold
+                ? <div className="hold-chip" role="status" data-testid="hold-chip"><span className="dot" /><b>MANUAL HOLD</b><span>AUTONOMY SUSPENDED · AIRCRAFT STATIONARY</span></div>
+                : <div className="vp-tag"><span className="dot" />REAL SITE PHOTO · SYNTHETIC TELEMETRY</div>}
+              <div className="vp-cams" role="group" aria-label="View">
+                {([['full', 'Full', Layers], ['drone', 'Drone', Target]] as const).map(([m, l, Icon]) => (
+                  <button key={m} type="button" className={`seg ${photoView === m ? 'on' : ''}`} aria-pressed={photoView === m} title={`${l} view`}
+                    onClick={(e) => { if (e.detail) e.currentTarget.blur(); setPhotoView(m); setCamToken((x) => x + 1); }}><Icon size={14} />{l}</button>
                 ))}
-                <button type="button" className="seg" title="Reset camera (C)" onClick={(e) => { if (e.detail) e.currentTarget.blur(); setCamToken((x) => x + 1); }}><Focus size={14} />Reset</button>
+                <button type="button" className="seg" title="Reset view (C)" onClick={(e) => { if (e.detail) e.currentTarget.blur(); setPhotoView('full'); setCamToken((x) => x + 1); }}><RotateCcw size={14} />Reset</button>
               </div>
+              <AltitudeTape alt={snap.pos.z} target={snap.route.cruiseAlt} vz={snap.vz} />
               <div className="vp-hud">
                 <div className={`hud-state ${STATE_TONE[st]}`}>{STATE_LABEL[st]}</div>
                 <div className="hud-clock mono">T+{fmtClock(snap.missionTime)}</div>
                 <div className="hud-bar"><span style={{ width: `${snap.progress * 100}%` }} /></div>
                 <div className="hud-pct mono">{Math.round(snap.progress * 100)}%</div>
-              </div>
-              <div className="vp-legend" aria-hidden="true">
-                <span><i className="lgd cyan" />Planned</span><span><i className="lgd green" />Completed</span><span><i className="lgd white" />Current WP</span><span><i className="lgd amber" />In range</span><span><i className="lgd red" />&lt; {WARN_DIST} m</span>
+                <div className="hud-disc" title="Static site photograph — not a live feed. All telemetry is synthetic.">STATIC PHOTO · SYNTHETIC TELEMETRY</div>
               </div>
               {effective === 'COUNTDOWN' && <Countdown value={snap.countdown} paused={st === 'PAUSED'} />}
               {st === 'PAUSED' && effective !== 'COUNTDOWN' && <div className="paused-badge"><Pause size={14} />PAUSED</div>}
               {st === 'COMPLETE' && !summaryClosed && <CompleteCard snap={snap} onClose={() => setSummaryClosed(true)} />}
-              {hold && (
-                <div className="vp-banner amber" role="status" data-testid="hold-banner">
-                  <div className="vb-text"><b>MANUAL HOLD</b><span>Aircraft frozen. Autonomous navigation is suspended until you press RESUME AUTO.</span></div>
-                  <Btn variant="accent" onPress={() => send('RESUME_AUTONOMY')}><Navigation size={15} />RESUME AUTO</Btn>
-                </div>
-              )}
               {st === 'ROUTE_BLOCKED' && (
                 <div className="vp-banner red" role="alert" data-testid="blocked-banner">
                   <div className="vb-text"><b>ROUTE BLOCKED{snap.blocked?.id ? ` · ${snap.blocked.id}` : ''}{snap.blocked?.dist != null ? ` · ${snap.blocked.dist.toFixed(1)} m` : ''}</b><span>{snap.blocked?.reason}</span></div>
@@ -302,7 +318,7 @@ export default function App() {
               )}
               {showProx && <div className="prox-banner" role="status">Proximity advisory · {snap.nearest!.id} · {snap.nearest!.dist.toFixed(1)} m</div>}
               {toast && <div className={`toast ${toast.tone}`} role="status">{toast.msg}</div>}
-              {rx && <><div key={`f${rx.n}${rx.cmd}`} className="rx-flash" aria-hidden="true" /><RestrictedAlert cmd={rx.cmd} leaving={rx.leaving} count={rx.n} /></>}
+              {rx && <RestrictedAlert cmd={rx.cmd} leaving={rx.leaving} count={rx.n} />}
             </div>
 
             <div className="dock">
@@ -312,13 +328,17 @@ export default function App() {
                   <Btn variant="primary" pointerOnly disabled={!ok('START')} onPress={() => send('START')} title="Start the mission countdown (mouse click only)"><Play size={15} />START MISSION</Btn>
                   {st === 'PAUSED'
                     ? <Btn onPress={() => send('RESUME')} title="Resume (Space)"><Play size={15} />RESUME</Btn>
-                    : <Btn disabled={!ok('PAUSE')} onPress={() => send('PAUSE')} title="Pause the simulation (Space)"><Pause size={15} />PAUSE</Btn>}
+                    : hold && engine.site
+                      ? <Btn onPress={() => handleRestrictedFlightCommand('PAUSE')} title="Denied while the aircraft is in MANUAL HOLD" data-cmd="PAUSE" className="rx-btn"><Pause size={15} />PAUSE</Btn>
+                      : <Btn disabled={!ok('PAUSE')} onPress={() => send('PAUSE')} title="Pause the simulation (Space)"><Pause size={15} />PAUSE</Btn>}
                   <Btn disabled={!ok('RESET')} onPress={() => send('RESET')} title="Return to launch pad and clear the mission"><RotateCcw size={15} />RESET</Btn>
                   {hold
-                    ? <Btn variant="accent" disabled={!ok('RESUME_AUTO')} onPress={() => send('RESUME_AUTONOMY')} title="Recalculate from here and continue autonomously"><Navigation size={15} />RESUME AUTO</Btn>
+                    ? (engine.site
+                      ? <Btn onPress={() => handleRestrictedFlightCommand('RESUME AUTO')} title="Denied while the aircraft is in MANUAL HOLD" data-cmd="RESUME AUTO" className="rx-btn"><Navigation size={15} />RESUME AUTO</Btn>
+                      : <Btn disabled={!ok('RESUME_AUTO')} onPress={() => send('RESUME_AUTONOMY')} title="Recalculate from here and continue autonomously"><Navigation size={15} />RESUME AUTO</Btn>)
                     : <Btn disabled={!ok('HOLD')} onPress={() => send('HOLD')} title="Stop and hold position"><Hand size={15} />HOLD</Btn>}
                   <Btn disabled={!ok('RECALCULATE')} onPress={replan} title={hold ? 'In hold, RESUME AUTO recalculates the route' : 'Recalculate the route (standby, transit or blocked)'}><Route size={15} />RECALCULATE</Btn>
-                  <Btn disabled={!ok('NEW_ENV')} onPress={newEnv} title="Generate a new environment (standby only)"><Shuffle size={15} />NEW ENVIRONMENT</Btn>
+                  <Btn disabled={!ok('NEW_ENV')} onPress={newEnv} title="Generate a new environment (standby only)"><Shuffle size={15} />NEW <span className="lbl-wide">ENVIRONMENT</span><span className="lbl-narrow">ENV</span></Btn>
                 </div>
               </div>
               <div className="dock-g flight">
@@ -333,7 +353,7 @@ export default function App() {
                 </div>
               </div>
               <div className="dock-g link">
-                <div className="dock-h" title="Hardware commands are not available in the virtual environment">Vehicle link <span className="dock-note lbl-long"><Lock size={11} />not available</span></div>
+                <div className="dock-h" title="Hardware commands are not available in the virtual environment"><span className="lbl-wide">Vehicle&nbsp;</span>link <span className="dock-note lbl-long"><Lock size={11} />not available</span></div>
                 <div className="dock-grid one">
                   <Btn variant="locked" silent onPress={() => deny('HARDWARE UPLINK')} title="Not available in the virtual environment"><Lock size={13} /><span className="lbl-long">HARDWARE </span>UPLINK</Btn>
                   <Btn variant="locked" silent onPress={() => deny('GEOFENCE OVERRIDE')} title="Not available in the virtual environment"><Lock size={13} />GEOFENCE<span className="lbl-long"> OVERRIDE</span></Btn>
@@ -344,7 +364,7 @@ export default function App() {
 
           <aside className="col right" aria-label="Mission overview">
             <section className="panel map-panel">
-              <header className="panel-h"><span className="panel-ic"><MapIcon size={15} /></span><h3 className="panel-t">Map</h3><span className="panel-aside mono muted">120 × 120 m</span></header>
+              <header className="panel-h"><span className="panel-ic"><MapIcon size={15} /></span><h3 className="panel-t">Map</h3><span className="panel-aside mono muted">{snap.site ? `P1 → P2 ${snap.site.distanceM.toFixed(1)} m${snap.site.estimated ? ' est.' : ''}` : '120 × 120 m'}</span></header>
               <div className="panel-b"><MiniMap engine={engine} /></div>
             </section>
             <section className="panel">

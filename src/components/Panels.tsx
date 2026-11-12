@@ -1,4 +1,4 @@
-import { Compass, Gauge, Radar, Crosshair } from 'lucide-react';
+import { Compass, Gauge, Radar, Crosshair, MapPin } from 'lucide-react';
 import { Panel, Metric, Row, f1, fmtClock } from './ui';
 import { LogEntry, MissionState, Snapshot, SENSOR_RANGE, WARN_DIST, wpName } from '../sim/engine';
 
@@ -49,10 +49,12 @@ export function NavPanel({ snap }: { snap: Snapshot }) {
   const st = snap.state === 'PAUSED' ? snap.resumeTo ?? 'STANDBY' : snap.state;
   const n = snap.waypointCount;
   const routeDone = st === 'LANDING' || st === 'COMPLETE';
-  const wpLabel = routeDone ? 'Target reached' : `${wpName(snap.currentWp, n + 1)} · ${snap.currentWp} of ${n}`;
+  const wpLabel = snap.site
+    ? (routeDone ? 'Point 2 reached' : `Point 2 · ${snap.currentWp} of ${n}`)
+    : routeDone ? 'Target reached' : `${wpName(snap.currentWp, n + 1)} · ${snap.currentWp} of ${n}`;
   const status: [string, string] =
     st === 'ROUTE_BLOCKED' ? ['Blocked', 'red'] :
-    st === 'MANUAL_HOLD' ? ['Holding · autonomy suspended', 'amber'] :
+    st === 'MANUAL_HOLD' ? ['Position hold', 'amber'] :
     st === 'AUTONOMOUS_TRANSIT' ? ['Tracking route', 'cyan'] :
     routeDone ? ['Route complete', 'green'] : ['Route ready', 'green'];
   const r = snap.route;
@@ -73,6 +75,25 @@ export function NavPanel({ snap }: { snap: Snapshot }) {
 const SENSOR_LABEL: Record<Snapshot['sensor'], [string, string]> = {
   IDLE: ['Standby scan', 'muted'], HOLD: ['Held · frozen', 'amber'], SCANNING: ['Scanning · 10 Hz', 'cyan'], STATIONARY: ['Scanning · stationary', 'amber'], FROZEN: ['Frozen (paused)', 'amber'],
 };
+
+/** Real-site geometry: derived from the measured photo points and the engine's authoritative position. */
+export function SitePanel({ snap }: { snap: Snapshot }) {
+  const site = snap.site;
+  if (!site) return <PerceptionPanel snap={snap} />;
+  return (
+    <Panel title="Test site" icon={<MapPin size={15} />} aside={<span className="mono muted">static photo</span>}>
+      <div className="metric-grid">
+        <Metric label="Point 1 → Point 2" value={site.distanceM.toFixed(1)} unit="m" tone="cyan" />
+        <Metric label="To destination" value={snap.distToGoal.toFixed(1)} unit="m" />
+      </div>
+      <div className="site-extra">
+        <Row k="Start" v="Point 1 · near pillar" />
+        <Row k="Destination" v="Point 2 · far pillar" />
+      </div>
+      <Row k="Distance source" v={site.estimated ? 'Photo estimate' : 'Measured'} tone={site.estimated ? 'amber' : undefined} />
+    </Panel>
+  );
+}
 
 export function PerceptionPanel({ snap }: { snap: Snapshot }) {
   const pct = snap.totalPoints ? snap.pointsMapped / snap.totalPoints : 0;
@@ -115,9 +136,11 @@ export function Timeline({ snap }: { snap: Snapshot }) {
         else if (active && st === 'ROUTE_BLOCKED') note = 'blocked';
         else if (active && st === 'AUTONOMOUS_TRANSIT') note = `WP ${snap.currentWp}/${snap.waypointCount} · R${snap.route.rev}`;
         else if (active && snap.state === 'PAUSED') note = 'paused';
+        const name = i === 3 && st === 'MANUAL_HOLD' && snap.routeFlown === 0 ? 'Position hold' : x.name;
+        if (name === 'Position hold') note = '';
         return (
           <li key={x.name} className={`tl ${done ? 'done' : ''} ${active ? 'cur' : ''}`}>
-            <span className="tl-dot" /><span className="tl-n">{x.name}</span>{note && <span className="tl-note mono">{note}</span>}
+            <span className="tl-dot" /><span className="tl-n">{name}</span>{note && <span className="tl-note mono">{note}</span>}
           </li>
         );
       })}

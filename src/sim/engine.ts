@@ -7,10 +7,11 @@
 //   TAKEOFF / TRANSIT / LANDING           : mission time, physics and LiDAR (10 Hz) advance.
 //   Takeoff completion (cruise altitude reached, CRUISE_REACHED) enters MANUAL_HOLD exactly once.
 //   MANUAL_HOLD                           : physics loop NOT stepped. Position, altitude, heading,
-//                                           velocity (0), route/waypoint progress, mission clock and
-//                                           LiDAR are all frozen. Only an explicit RESUME AUTO / RESET
-//                                           leaves it. Manual flight commands are restricted: they are
-//                                           denied and force MANUAL_HOLD; they never move the aircraft.
+//                                           velocity (0), route/waypoint progress and LiDAR are frozen;
+//                                           the mission clock T+ keeps running. Manual flight commands
+//                                           are restricted: denied, force MANUAL_HOLD, never move the
+//                                           aircraft. Site mode: RESUME AUTO and PAUSE are also denied
+//                                           while held (only RESET leaves the hold).
 //   ROUTE_BLOCKED                         : aircraft stationary; mission clock runs; LiDAR monitors.
 //   PAUSED                                : everything frozen, including mission time and LiDAR.
 import * as THREE from 'three';
@@ -18,6 +19,7 @@ import {
   CRUISE_ALT, GOAL, PLAN_CLEARANCE, START, World, Obstacle,
   clearance3D, footprintDistance, generateWorld, planRoute,
 } from './world';
+import { SiteConfig, createSiteWorld } from './site';
 
 // ------------------------------------------------------------------ state machine
 export type MissionState =
@@ -75,6 +77,8 @@ export type Level = 'info' | 'ok' | 'warn' | 'alert';
 export interface LogEntry { id: number; t: string; level: Level; msg: string }
 /** Manual flight commands. ALL are restricted: they are denied and never move the aircraft. */
 export const RESTRICTED_COMMANDS = ['FORWARD', 'BACKWARD', 'LEFT', 'RIGHT', 'YAW LEFT', 'YAW RIGHT', 'ASCEND', 'DESCEND'] as const;
+/** Mission commands that are also denied while the real-site aircraft is in MANUAL_HOLD. */
+export const HOLD_RESTRICTED_COMMANDS = ['RESUME AUTO', 'PAUSE'] as const;
 export type RestrictedCommand = typeof RESTRICTED_COMMANDS[number];
 const IN_FLIGHT: MissionState[] = ['TAKEOFF', 'AUTONOMOUS_TRANSIT', 'MANUAL_HOLD', 'ROUTE_BLOCKED', 'LANDING'];
 
@@ -147,6 +151,8 @@ export interface Snapshot {
   holdTime: number;
   blocked: { id: string | null; kind: string | null; dist: number | null; reason: string } | null;
   deniedCount: number;
+  site: { distanceM: number; estimated: boolean } | null;
+  distToGoal: number; // horizontal distance to the destination (m)
 }
 
 type Listener = (e: { type: string; level?: Level }) => void;
@@ -242,8 +248,36 @@ export class Engine {
   animTime = 0;
   steps = 0;
 
-  constructor(seed = 2205) {
-    this.load(seed, true);
+  /** Real site (photo) mode when given a SiteConfig; synthetic generated world when given a seed. */
+  site: SiteConfig | null = null;
+  startPt = { x: START.x, z: START.z };
+  goalPt = { x: GOAL.x, z: GOAL.z };
+
+  constructor(source: number | SiteConfig = 2205) {
+    if (typeof source === 'number') this.load(source, true);
+    else {
+      this.site = source;
+      this.startPt = { ...source.start };
+      this.goalPt = { ...source.goal };
+      this.loadSite(true);
+    }
+  }
+
+  /** Route between two points: straight when there are no known obstacles, otherwise A*. */
+  private plan(fx: number, fz: number) {
+    if (this.world.obstacles.length === 0) return { points: [{ x: fx, z: fz }, { x: this.goalPt.x, z: this.goalPt.z }], expanded: 0 };
+    return planRoute(this.world.obstacles, fx, fz, this.goalPt.x, this.goalPt.z);
+  }
+
+  private loadSite(initial = false) {
+    this.world = createSiteWorld();
+    this.mapped = new Uint8Array(0);
+    this.inRangeMask = new Uint8Array(0);
+    this.basePlan = [{ x: this.startPt.x, z: this.startPt.z }, { x: this.goalPt.x, z: this.goalPt.z }];
+    this.baseExpanded = 0;
+    this.worldVersion++;
+    this.resetFlight();
+    if (!initial) this.emit('reset');
   }
 
   // route accessors (all consumers read the same route object)
@@ -289,11 +323,16 @@ export class Engine {
   }
 
   // ---------------------------------------------------------------- availability & transitions
-  allowed(a: Action) { return ACTIONS[a].includes(this.state); }
+  allowed(a: Action) {
+    if (a === 'NEW_ENV' && this.site) return false; // the real site is fixed
+    if (this.site && this.state === 'MANUAL_HOLD' && (a === 'RESUME_AUTO' || a === 'PAUSE')) return false; // hold is permanent on the site
+    return ACTIONS[a].includes(this.state);
+  }
   can(tr: Trigger) { return TRANSITIONS[tr].from.includes(this.state); }
 
   dispatch(tr: Trigger): boolean {
     const rule = TRANSITIONS[tr];
+    if (this.site && this.state === 'MANUAL_HOLD' && (tr === 'RESUME_AUTONOMY' || tr === 'PAUSE')) return false; // site hold cannot be left except by RESET
     if (!rule.from.includes(this.state)) {
       if (import.meta.env.DEV) console.debug(`[aegis] rejected ${tr} in ${this.state}`);
       return false;
@@ -410,7 +449,7 @@ export class Engine {
   recalculate(): boolean {
     if (!this.allowed('RECALCULATE')) return false;
     if (this.state === 'STANDBY') {
-      const plan = planRoute(this.world.obstacles, START.x, START.z, GOAL.x, GOAL.z);
+      const plan = this.plan(this.startPt.x, this.startPt.z);
       if (!plan) return false;
       this.setRoute(plan.points, plan.expanded, CRUISE_ALT, CRUISE_ALT, 'RECALCULATED', this.route.rev + 1);
       this.addLog('ok', `Route R${this.route.rev} · ${this.waypoints.length - 1} waypoints · ${this.planLength.toFixed(1)} m`);
@@ -430,7 +469,7 @@ export class Engine {
   }
 
   private replanFromHere(): boolean {
-    const plan = planRoute(this.world.obstacles, this.pos.x, this.pos.z, GOAL.x, GOAL.z);
+    const plan = this.plan(this.pos.x, this.pos.z);
     if (!plan) return false;
     // keep current altitude if above cruise (never descend onto obstacle tops); climb to cruise if below
     const cruise = THREE.MathUtils.clamp(this.pos.y, CRUISE_ALT, MAX_ALT);
@@ -445,7 +484,7 @@ export class Engine {
     this.setRoute(this.basePlan, this.baseExpanded, CRUISE_ALT, CRUISE_ALT, 'INITIAL', 1);
     this.resumeTo = null;
     this.countdown = 0;
-    this.pos.set(START.x, 0, START.z);
+    this.pos.set(this.startPt.x, 0, this.startPt.z);
     this.vel.set(0, 0, 0);
     this.acc.set(0, 0, 0);
     this.speed = 0;
@@ -456,7 +495,7 @@ export class Engine {
     this.minClearance = Infinity;
     this.blocked = null;
     const first = this.waypoints[1];
-    this.heading = norm(Math.atan2(first.x - START.x, -(first.z - START.z)));
+    this.heading = norm(Math.atan2(first.x - this.startPt.x, -(first.z - this.startPt.z)));
     this.yawRate = 0;
     this.deniedCount = 0;
     this.inRange = [];
@@ -471,8 +510,13 @@ export class Engine {
     this.accT = 0;
     this.log = [];
     const w = this.world;
-    this.addLog('ok', `Environment ready · seed ${w.seed} · ${w.obstacles.length} obstacles · ${w.cloud.count.toLocaleString()} LiDAR points`);
-    this.addLog('info', `Route R1 · ${this.waypoints.length - 1} waypoints · ${this.planLength.toFixed(1)} m · cruise ${CRUISE_ALT.toFixed(1)} m`);
+    if (this.site) {
+      this.addLog('ok', `Site ready · Point 1 (start) → Point 2 (destination) · ${this.planLength.toFixed(1)} m${this.site.distanceIsEstimate ? ' (photo estimate)' : ''}`);
+      this.addLog('info', `Route R1 · direct · cruise ${CRUISE_ALT.toFixed(1)} m · takeoff ends in position hold`);
+    } else {
+      this.addLog('ok', `Environment ready · seed ${w.seed} · ${w.obstacles.length} obstacles · ${w.cloud.count.toLocaleString()} LiDAR points`);
+      this.addLog('info', `Route R1 · ${this.waypoints.length - 1} waypoints · ${this.planLength.toFixed(1)} m · cruise ${CRUISE_ALT.toFixed(1)} m`);
+    }
     this.updatePerception(false);
     this.scan(); // single standby scan from the pad (not repeated until flight)
   }
@@ -491,7 +535,7 @@ export class Engine {
    * Idempotent: repeated clicks while already held change nothing but the log/counter.
    */
   handleRestrictedFlightCommand(command: string): { denied: true; state: MissionState; known: boolean } {
-    const known = (RESTRICTED_COMMANDS as readonly string[]).includes(command);
+    const known = ([...RESTRICTED_COMMANDS, ...HOLD_RESTRICTED_COMMANDS] as readonly string[]).includes(command);
     if (this.restrictedAvailable() && this.state !== 'MANUAL_HOLD') this.dispatch('DENY_HOLD');
     if (this.state === 'MANUAL_HOLD') this.stopAt(this.pos); // re-assert zero velocity
     this.deniedCount++;
@@ -517,7 +561,8 @@ export class Engine {
       return;
     }
     if (st === 'MANUAL_HOLD') { // physics loop stopped: nothing in the flight state may change
-      this.holdTime += dt; // wall-clock hold duration, used only for the reminder log
+      this.holdTime += dt; // hold duration, used for the reminder log
+      this.missionTime += dt; // mission clock T+ keeps running during the hold (no physics)
       if (Math.floor(this.holdTime / HOLD_REMINDER) !== Math.floor((this.holdTime - dt) / HOLD_REMINDER)) {
         this.addLog('info', `Position hold · ${Math.round(this.holdTime)} s · aircraft stationary`);
       }
@@ -532,7 +577,9 @@ export class Engine {
 
     if (st === 'TAKEOFF') {
       const target = this.waypoints[0].y;
-      const vy = Math.min(MAX_VZ, Math.max(0.4, (target - this.pos.y) * 1.2));
+      const vy = this.site // real site: configured climb rate with a short ease-in at the top
+        ? Math.min(this.site.climbRateMps, Math.max(0.5, (target - this.pos.y) * 3))
+        : Math.min(MAX_VZ, Math.max(0.4, (target - this.pos.y) * 1.2));
       this.pos.y = Math.min(target, this.pos.y + vy * dt);
     } else if (st === 'AUTONOMOUS_TRANSIT') {
       const L = this.planLength;
@@ -700,7 +747,7 @@ export class Engine {
       initStep: Math.max(0, Math.min(INIT_STEPS + 1, Math.floor((this.initT - INIT_LEAD) / INIT_STEP_T) + 1)),
       countdown: this.countdown,
       seed: this.world.seed,
-      pos: { x: this.pos.x, y: -this.pos.z, z: this.pos.y },
+      pos: { x: this.pos.x + 0, y: -this.pos.z + 0, z: this.pos.y + 0 },
       groundSpeed: Math.hypot(this.vel.x, this.vel.z),
       vz: this.vel.y,
       yawRate: THREE.MathUtils.radToDeg(this.yawRate),
@@ -727,6 +774,8 @@ export class Engine {
       holdTime: this.holdTime,
       blocked: this.blocked,
       deniedCount: this.deniedCount,
+      site: this.site ? { distanceM: this.site.distanceM, estimated: this.site.distanceIsEstimate } : null,
+      distToGoal: Math.hypot(this.goalPt.x - this.pos.x, this.goalPt.z - this.pos.z),
     };
   }
 }

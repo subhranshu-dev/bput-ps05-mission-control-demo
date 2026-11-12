@@ -21,7 +21,7 @@ const until = (e: Engine, pred: () => boolean, max = 300, dt = 0.05) => {
 // takeoff now ends in an automatic position hold; transit only after an explicit RESUME AUTO
 const toTransit = (e: Engine) => { assert.ok(e.dispatch('START')); assert.ok(until(e, () => e.state === 'MANUAL_HOLD', 30)); assert.ok(e.dispatch('RESUME_AUTONOMY')); return e; };
 const key = (e: Engine) => JSON.stringify([e.pos.toArray(), e.s, e.routeFlown, e.currentWp]);
-const frozen = (e: Engine) => JSON.stringify([e.pos.toArray(), e.heading, e.s, e.routeFlown, e.currentWp, e.missionTime, e.vel.toArray(), e.yawRate, e.pointsInRange, e.pointsMapped, e.scans, e.snapshot().progress, e.snapshot().remaining]);
+const frozen = (e: Engine) => JSON.stringify([e.pos.toArray(), e.heading, e.s, e.routeFlown, e.currentWp, e.vel.toArray(), e.yawRate, e.pointsInRange, e.pointsMapped, e.scans, e.snapshot().progress, e.snapshot().remaining]);
 
 test('1 welcome stays idle for 60 s', () => {
   const e = new Engine(2205);
@@ -148,7 +148,7 @@ test('10–11 manual hold freezes physics, mission clock and LiDAR', () => {
   assert.equal(s.progress, prog); assert.equal(s.remaining, rem);
   assert.equal(e.pointsInRange, pir); assert.equal(e.pointsMapped, mapped);
   assert.equal(s.sensor, 'HOLD');
-  assert.equal(e.missionTime, t0, 'mission clock frozen in hold');
+  assert.ok(Math.abs(e.missionTime - t0 - 65) < 0.02, 'mission clock T+ keeps running during hold');
   assert.equal(e.scans, scans, 'LiDAR frozen in hold');
   assert.ok(e.log.some((l) => l.msg.includes('press RESUME AUTO')), 'hold reminder logged');
 });
@@ -327,4 +327,75 @@ test('RESTRICTED: forces hold from TAKEOFF, LANDING, ROUTE_BLOCKED and PAUSED-in
     g.handleRestrictedFlightCommand('FORWARD');
     assert.equal(g.state, st); assert.equal(g.pos.y, 0);
   }
+});
+
+// ---------------------------------------------------------------- real test site (photo) mode
+import { SITE, droneImagePoint } from '../src/sim/site';
+
+test('SITE: config — native landscape photo, registered points, drone box never overlaps Point 2 at 8 m', () => {
+  assert.deepEqual([SITE.photo.width, SITE.photo.height], [1280, 684]);
+  assert.ok(SITE.p1.base.x > SITE.p2.base.x + 600, 'pillars clearly separated left/right');
+  const d = droneImagePoint(8);
+  assert.equal(d.x, SITE.groundAnchor.x); // straight up in screen space
+  assert.equal(d.y, SITE.groundAnchor.y - 8 * SITE.altitudePxPerM);
+  const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
+  assert.ok(dist(d, SITE.p1.base) < dist(d, SITE.p2.base) / 2, 'drone clearly closer to P1 than to P2');
+  for (const iconImgPx of [72, 96, 128]) { // icon size in image px at small display scales too
+    const h = iconImgPx / 2;
+    const p2 = SITE.p2.box;
+    const overlap = d.x - h < p2.x1 && p2.x0 < d.x + h && d.y - h < p2.y1 && p2.y0 < d.y + h;
+    assert.equal(overlap, false, `drone box (${iconImgPx}px) overlaps P2`);
+  }
+});
+
+test('SITE: direct Point 1 → Point 2 route, no synthetic obstacles or LiDAR cloud, fixed environment', () => {
+  const e = new Engine(SITE);
+  assert.equal(e.world.obstacles.length, 0);
+  assert.equal(e.world.cloud.count, 0);
+  assert.equal(e.waypoints.length, 2);
+  assert.ok(Math.abs(e.planLength - SITE.distanceM) < 0.05, `${e.planLength}`);
+  assert.deepEqual([e.pos.x, e.pos.y, e.pos.z], [0, 0, 0]);
+  assert.equal(e.snapshot().heading, 0);
+  toStandby(e);
+  assert.equal(e.allowed('NEW_ENV'), false);
+  assert.equal(e.newEnvironment(), false);
+});
+
+test('SITE: takeoff at Point 1 → automatic hold at 8 m; 60 s stationary; 8 commands denied; never travels to Point 2', () => {
+  const e = toStandby(new Engine(SITE));
+  e.dispatch('START');
+  const seen = new Set<string>();
+  until(e, () => { seen.add(e.state); return e.state === 'MANUAL_HOLD'; }, 30, 0.01);
+  assert.deepEqual([...seen], ['COUNTDOWN', 'TAKEOFF', 'MANUAL_HOLD']);
+  const s = e.snapshot();
+  assert.deepEqual([s.pos.x, s.pos.y, s.pos.z], [0, 0, 8]);
+  assert.equal(s.heading, 0); assert.equal(s.groundSpeed, 0); assert.equal(s.vz, 0); assert.equal(s.yawRate, 0);
+  assert.equal(s.progress, 0); assert.equal(s.routeFlown, 0); assert.equal(s.traveled, 8);
+  assert.ok(Math.abs(s.distToGoal - SITE.distanceM) < 1e-9);
+  const f0 = frozen(e);
+  e.advance(60);
+  for (const c of RESTRICTED_COMMANDS) { e.handleRestrictedFlightCommand(c); e.advance(1); }
+  e.advance(30);
+  assert.equal(frozen(e), f0);
+  assert.equal(e.state, 'MANUAL_HOLD');
+});
+
+test('SITE: takeoff uses the configured climb rate (1.5 m/s → 5–6 s); clock runs in hold; RESUME AUTO / PAUSE denied while held', () => {
+  const e = toStandby(new Engine(SITE));
+  assert.equal(SITE.climbRateMps, 1.5);
+  e.dispatch('START');
+  until(e, () => e.state === 'TAKEOFF', 10, 0.01);
+  const t0 = e.missionTime;
+  e.advance(1); assert.ok(Math.abs(e.snapshot().vz - 1.5) < 1e-6, `vz ${e.snapshot().vz}`);
+  until(e, () => e.state === 'MANUAL_HOLD', 30, 0.01);
+  const climb = e.missionTime - t0;
+  assert.ok(climb > 5 && climb < 6.2, `climb took ${climb.toFixed(2)} s`);
+  const f0 = frozen(e), tm = e.missionTime;
+  assert.equal(e.allowed('RESUME_AUTO'), false); assert.equal(e.allowed('PAUSE'), false);
+  assert.equal(e.dispatch('RESUME_AUTONOMY'), false); assert.equal(e.dispatch('PAUSE'), false);
+  for (const c of ['RESUME AUTO', 'PAUSE']) { const r = e.handleRestrictedFlightCommand(c); assert.equal(r.known, true); }
+  e.advance(30);
+  assert.equal(e.state, 'MANUAL_HOLD'); assert.equal(frozen(e), f0);
+  assert.ok(e.missionTime > tm + 29.9, 'T+ advances during hold');
+  assert.ok(e.dispatch('RESET'), 'RESET still leaves the hold');
 });

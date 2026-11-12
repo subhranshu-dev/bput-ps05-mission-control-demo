@@ -15,7 +15,7 @@ const check = (n, ok, d = '') => { if (!ok) fails++; console.log(`${ok ? 'PASS' 
   const errs = [];
   p.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errs.push(m.text()); });
   p.on('pageerror', (e) => errs.push('PAGEERROR ' + e.message));
-  const F = () => p.evaluate(() => { const e = window.__aegis, s = e.snapshot(); return { state: e.state, s, k: JSON.stringify([e.pos.toArray(), e.heading, e.s, e.routeFlown, e.currentWp, e.missionTime, e.vel.toArray(), e.yawRate, e.scans, e.pointsMapped, e.pointsInRange]), y: e.pos.y, x: e.pos.x, z: e.pos.z, h: e.heading, cruise: e.route.cruiseAlt, log: e.log.map((l) => l.msg) }; });
+  const F = () => p.evaluate(() => { const e = window.__aegis, s = e.snapshot(); return { state: e.state, s, k: JSON.stringify([e.pos.toArray(), e.heading, e.s, e.routeFlown, e.currentWp, e.vel.toArray(), e.yawRate, e.scans, e.pointsMapped, e.pointsInRange]), y: e.pos.y, x: e.pos.x, z: e.pos.z, h: e.heading, cruise: e.route.cruiseAlt, log: e.log.map((l) => l.msg) }; });
   const click = (t) => p.locator('button', { hasText: new RegExp(`^\\s*${t}`) }).first().click();
   // record every state the engine passes through (sampled each animation frame in the page)
   await p.addInitScript(() => { window.__states = []; const tick = () => { const e = window.__aegis; if (e && window.__states[window.__states.length - 1] !== e.state) window.__states.push(e.state); requestAnimationFrame(tick); }; requestAnimationFrame(tick); });
@@ -40,7 +40,7 @@ const check = (n, ok, d = '') => { if (!ok) fails++; console.log(`${ok ? 'PASS' 
   // 6 stationary for HOLD_S seconds (sampled every second)
   let still = true, neverTransit = true;
   for (let i = 0; i < HOLD_S; i++) { await sleep(1000); const f = await F(); if (f.k !== h0.k) still = false; if (f.state !== 'MANUAL_HOLD') neverTransit = false; }
-  check(`6 stationary for ${HOLD_S} s (position, alt, heading, clock, LiDAR identical every second)`, still && neverTransit);
+  check(`6 stationary for ${HOLD_S} s (position, alt, heading, velocity, LiDAR identical every second; clock T+ runs)`, still && neverTransit);
   // 7–8 restricted buttons
   for (const cmd of BUTTONS) {
     const before = await F();
