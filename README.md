@@ -11,20 +11,25 @@ npm run dev                 # http://127.0.0.1:5180
 npm run build && npm run preview   # production build at http://127.0.0.1:5181
 ```
 
-## Real test site (default view)
-The central view shows the landscape photo `~/ms_demo/WhatsApp Image 2026-11-12 at 8.18.53 PM (1).jpeg`, taken side-on at a native 1280×684. It is served at native resolution as `public/site/test-site-landscape.jpg` (JPEG q92), enhanced with Pillow: auto-levels, a highlight roll-off for floodlight glare, mild contrast and colour, and a light unsharp mask. Nothing is added or removed. Everything about the site lives in one config file, `src/sim/site.ts`:
+## Real test site — living 2.5D scene (default view)
+The source is `~/ms_demo/WhatsApp Image 2026-11-12 at 8.18.53 PM (1).jpeg`. At 1280×684 it is the highest-resolution original, and no larger copy exists. Offline preparation runs once with `tools/.venv/bin/python tools/prepare_site.py`; nothing runs ML in the browser. It:
+- crops the floodlight bulb strip (top 60 px) and the left 80 px, then applies mild denoise, sharpening and contrast. The result is `public/site/night.jpg`, 1200×624;
+- grades DAY from the night photo, because no day photo exists. The result is `public/site/day.jpg`;
+- computes depth with Depth-Anything-V2-Small (ONNX, onnxruntime, CPU). Depth is corrected to metric scale against the calibrated ground plane, and standing objects take their ground-contact depth. The result is `public/site/depth.png` (16-bit) plus `depth-rg.png` (runtime);
+- fits the camera by least squares from the measured pillar pixels, pillar height (1.5 m, estimate) and P1–P2 distance (24.2 m, estimate). The fit is written to `src/sim/site.calib.json`.
 
-| Key | Value (image px) |
-|---|---|
-| Point 1 (start, near pole) | base (1249, 636), top (1150, 141) |
-| Point 2 (destination, far pole) | base (259, 305), top (242, 250) |
-| `groundAnchor` (drone start / shadow) | (1249, 640) |
-| `altitudePxPerM` | 42 (display scale for the vertical altitude stem; true perspective would put 8 m off-frame) |
-| `climbRateMps` | 1.5 (≈ 5.7 s to 8 m) |
-| `realDroneBox` (our real drone in the photo, never labelled over) | x 640–872, y 598–684 |
+The pipeline cannot do two things with this photo:
+- **Crop out the real drone:** it shares rows y 598–684 with the Point 1 base (y≈636), so cropping it would cut off Point 1.
+- **Level the horizon by resampling:** the image is rotated −19° (roll), and resampling would push Point 1 out of the frame. The horizon is instead levelled in 3D with a roll-free camera.
 
-- **Distance:** the P1→P2 distance of ≈24.2 m is an estimate from the earlier rear-view photo. Set `MEASURED_DISTANCE_M` once the real distance is measured.
-- **Hold:** takeoff ends in an automatic MANUAL HOLD. All 8 manual buttons, RESUME AUTO and PAUSE show COMMAND DENIED while held, and only RESET leaves the hold. The mission clock T+ keeps running during the hold.
+`src/components/Scene3D.tsx` renders:
+- the photo as a depth-displaced mesh (512 or 256 segments), with stretched triangles culled and the borders feathered into a photo-matched sky and ground;
+- the procedural X-frame drone (`drone3d.ts`), with the contact shadow and altitude stem;
+- the ground route and CSS2D labels with collision avoidance;
+- the camera director (AUTO, WIDE, FOLLOW, ORBIT, TACTICAL, RESET; drag, wheel, click and double-click);
+- day/night lighting and bloom, plus auto quality (HIGH falls back to LOW below 45 fps).
+
+The config keys live in `src/sim/site.ts`: `targetAltitudeM` 12, `climbRateMps` 1.5, `pillarHeightM`, `p1p2DistanceM`, `droneDisplayScale`, `launchOffsetM` and `quality`.
 
 ## Mission flow (central state machine: `TRANSITIONS` in `src/sim/engine.ts`)
 ```
@@ -73,8 +78,7 @@ npm run dev &                     # then, in another shell:
 npm run test:e2e                  # real browser, 60 s idle at every waiting stage (~12 min)
 npm run test:takeoff              # takeoff → automatic hold, 60 s stationary, 8 denied commands
 npm run test:restricted           # the 8 restricted buttons (LONG=30 default)
-npm run test:site                 # native photo, pillar alignment at 5 window sizes × 2 views
-npm run test:photo                # screenshots + drone visibility/overlap/telemetry/10-button checks (OUT=dir)
+npm run test:scene                # 2.5D scene: night+day × 1366/1920, screenshots, overlap/calibration/ALT/60 s hold/FPS
 npm run test:layout               # every screen at 1280×720 … 1920×1080 incl. 125/150 % scaling
 IDLE=5 npm run test:e2e           # quick variant
 ```

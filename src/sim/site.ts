@@ -1,59 +1,71 @@
-// Real test-site configuration — the SINGLE place for photo, registration and site parameters.
-//
-// Photo: ~/ms_demo/"WhatsApp Image 2026-11-12 at 8.18.53 PM (1).jpeg" — the only landscape shot
-// (1280×684 native), taken from the side so Point 1 (right) and Point 2 (left) are clearly separated.
-// Served at native resolution as public/site/test-site-landscape.jpg (JPEG q92), enhanced with Pillow:
-// auto-levels (0.3 % cutoff, tone preserved), soft highlight roll-off above 205 (floodlight glare),
-// contrast ×1.06, colour ×1.05, unsharp mask r1.3/55 %. Nothing inpainted, added or removed.
-//
-// Pillar identity: the near pole carries the same "Vixen" print as Point 1 in the team's annotated photo
-// (8.30.50 PM); the far pole stands by the same dark object and round shrubs as Point 2 there.
-// Pixel coordinates were MEASURED on the native photo (white-pixel analysis + gridded zoom crops).
+// Real test-site configuration — the single place for photo, calibration and site parameters.
+// Photo set, depth map and calibration are produced OFFLINE by tools/prepare_site.py (see its header).
+import calib from './site.calib.json';
 import type { World } from './world';
 
-export const MEASURED_DISTANCE_M: number | null = null;
-/** Estimated from the earlier rear-view photo (pinhole fit, residual < 1 px); same physical pillars. */
-const ESTIMATED_DISTANCE_M = 24.22;
-const D = MEASURED_DISTANCE_M ?? ESTIMATED_DISTANCE_M;
 const base = (import.meta as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? '/';
+type V3 = [number, number, number];
 
 export const SITE = {
   name: 'Test site',
   photo: {
-    src: `${base}site/test-site-landscape.jpg`,
-    width: 1280,
-    height: 684,
-    original: 'WhatsApp Image 2026-11-12 at 8.18.53 PM (1).jpeg',
+    night: `${base}site/night.jpg`,
+    day: `${base}site/day.jpg`, // graded from the night photo (no separate day photo exists)
+    depth: `${base}site/depth-rg.png`, // 16-bit inverse depth packed in R/G (exact through <canvas>)
+    width: calib.size[0],
+    height: calib.size[1],
+    source: calib.source,
+    sourceSize: calib.sourceSize,
+    crop: calib.crop,
   },
-  /** Point 1 — START (near pillar, right). The pole leans in the photo: top cap → base on the grass. */
-  p1: { base: { x: 1249, y: 636 }, top: { x: 1150, y: 141 }, box: { x0: 1126, y0: 136, x1: 1274, y1: 640 } },
-  /** Point 2 — DESTINATION (far pillar, left). Thin leaning shaft: top → base on the grass. */
-  p2: { base: { x: 259, y: 305 }, top: { x: 242, y: 250 }, box: { x0: 236, y0: 246, x1: 264, y1: 309 } },
-  /** Where the virtual drone stands before takeoff (= Point 1 base); its shadow is drawn here. */
-  groundAnchor: { x: 1249, y: 640 },
-  /**
-   * Altitude DISPLAY scale (image px per metre) for the screen-vertical altitude stem above Point 1.
-   * True perspective would put 8 m ~3500 px above the frame (pillar ≈ 495 px tall for ≈ 1.13 m), so a
-   * declared display scale is used; 8 m → 336 px keeps the drone clear of the pillar top and of Point 2.
-   */
-  altitudePxPerM: 42,
-  /** Takeoff climb rate (m/s). 1.5 m/s ≈ 5.5 s to 8 m — set to match the real drone. */
+  calib,
+  /** Estimates (UI marks them as such). Changing them requires re-running tools/prepare_site.py. */
+  pillarHeightM: calib.assumed.pillarHeightM,
+  p1p2DistanceM: calib.assumed.p1p2DistanceM,
+  distanceIsEstimate: true,
+  distanceM: calib.assumed.p1p2DistanceM,
+  /** Mission parameters. */
+  targetAltitudeM: 12,
   climbRateMps: 1.5,
-  /** Our real drone is visible in the photo here (bottom centre): never cover it with a label. */
-  realDroneBox: { x0: 640, y0: 598, x1: 872, y1: 684 },
-  distanceM: D,
-  distanceIsEstimate: MEASURED_DISTANCE_M === null,
-  // engine frame (metres): Point 1 at the origin, Point 2 along the local route axis ("north" = −z)
+  cameraHFovDeg: calib.camera.hfovDegOriginal,
+  /** The drone model is ~0.6 m across (≈ the real X-frame); shown 1.2× so it reads clearly at mission distances. */
+  droneDisplayScale: 1.2,
+  /** Launch point relative to the Point 1 pole axis (world metres) so the drone never intersects the pole. */
+  launchOffsetM: { x: -1.1, z: 0.15 },
+  quality: 'auto' as 'auto' | 'high' | 'low',
+  // engine frame (metres): Point 1 at the origin; Point 2 along the local route axis ("north" = −z)
   start: { x: 0, z: 0 },
-  goal: { x: 0, z: -D },
-  bounds: { minX: -10, maxX: 10, minZ: -D - 6, maxZ: 6 },
+  goal: { x: 0, z: -calib.assumed.p1p2DistanceM },
+  bounds: { minX: -10, maxX: 10, minZ: -calib.assumed.p1p2DistanceM - 6, maxZ: 6 },
 };
 export type SiteConfig = typeof SITE;
 
-/** Image-space position of the virtual drone: straight up (screen-vertical) from the ground anchor. */
-export function droneImagePoint(altM: number) {
-  return { x: SITE.groundAnchor.x, y: SITE.groundAnchor.y - Math.max(0, altM) * SITE.altitudePxPerM };
+/** Calibrated photo camera basis (world: y up; camera at (0, h, 0), yaw 0 looking −Z). */
+export function photoCamera() {
+  const c = calib.camera;
+  const pitch = (c.pitchDeg * Math.PI) / 180, roll = (c.rollDeg * Math.PI) / 180;
+  const fwd: V3 = [0, -Math.sin(pitch), -Math.cos(pitch)];
+  const up0: V3 = [0, Math.cos(pitch), -Math.sin(pitch)];
+  const cr = Math.cos(roll), sr = Math.sin(roll);
+  const right: V3 = [cr, up0[1] * sr, up0[2] * sr];
+  const up: V3 = [-sr + up0[0] * cr, up0[1] * cr, up0[2] * cr];
+  return { pos: [0, c.height, 0] as V3, fwd, right, up, f: c.fPx, cx: c.cx, cy: c.cy, pitch, roll };
 }
+
+/** Projects a world point into prepared-photo pixels with the calibrated camera (null if behind). */
+export function projectToPhoto(p: V3): { x: number; y: number } | null {
+  const k = photoCamera();
+  const d: V3 = [p[0] - k.pos[0], p[1] - k.pos[1], p[2] - k.pos[2]];
+  const dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const z = dot(d, k.fwd);
+  if (z <= 0.01) return null;
+  return { x: k.cx + (k.f * dot(d, k.right)) / z, y: k.cy - (k.f * dot(d, k.up)) / z };
+}
+
+/** World positions of the two real pillars (ground contact points) and the drone's launch point. */
+export const P1W = calib.p1.world as V3;
+export const P2W = calib.p2.world as V3;
+export const LAUNCH: V3 = [P1W[0] + SITE.launchOffsetM.x, 0, P1W[2] + SITE.launchOffsetM.z];
 
 /** The site "world": no synthetic obstacles and no synthetic point cloud. */
 export function createSiteWorld(seed = 2205): World {

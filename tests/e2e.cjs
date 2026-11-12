@@ -10,7 +10,7 @@ const check = (name, ok, detail = '') => { results.push({ name, ok: !!ok }); con
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 (async () => {
-  const b = await chromium.launch({ executablePath: process.env.CHROME || '/usr/bin/google-chrome', headless: true, args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+  const b = await chromium.launch({ executablePath: process.env.CHROME || '/usr/bin/google-chrome', headless: true, args: [...(process.env.GL === 'swiftshader' ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : ['--use-angle=gl']), '--ignore-gpu-blocklist'] });
   const p = await b.newPage({ viewport: { width: 1366, height: 768 } });
   const errs = [];
   p.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errs.push(`${m.type()}: ${m.text()}`); });
@@ -60,7 +60,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   r = await idle('STANDBY'); await keys('Enter', 4); await keys(' ', 4);
   check(`6 STANDBY stationary ${IDLE / 1000}s (+Enter/Space)`, (await state()) === 'STANDBY' && r.a.k === r.z.k && r.z.missionTime === 0 && r.z.pos.z === 0 && r.a.scans === r.z.scans);
   // 15 route consistency briefing ↔ engine ↔ photo overlay ↔ nav panel
-  const wpDom = await p.evaluate(() => ({ dest: document.querySelectorAll('[data-testid=point2]').length, nav: [...document.querySelectorAll('.row')].find((x) => x.textContent.startsWith('Route')).textContent }));
+  const wpDom = await p.evaluate(() => ({ dest: document.querySelectorAll('[data-ov=label-p2]').length, nav: [...document.querySelectorAll('.row')].find((x) => x.textContent.startsWith('Route')).textContent }));
   check('15 waypoint count identical: briefing / engine / photo overlay / nav', briefWps === r.z.waypointCount && wpDom.dest === r.z.waypointCount && wpDom.nav.includes(`${r.z.waypointCount} WP`), `brief ${briefWps} engine ${r.z.waypointCount} overlay ${wpDom.dest} nav "${wpDom.nav}"`);
   await p.evaluate(() => [...document.querySelectorAll('button')].find((x) => x.textContent.includes('START MISSION')).focus());
   await keys('Enter', 2); await keys(' ', 2);
@@ -88,14 +88,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const chip = await p.locator('[data-testid=hold-chip]').textContent();
   // 10–11 the post-takeoff hold
   r = await idle('MANUAL_HOLD');
-  check(`10 MANUAL_HOLD ${IDLE / 1000}s after takeoff: position/alt/progress frozen, velocity 0`, r.z.state === 'MANUAL_HOLD' && r.a.k === r.z.k && r.z.groundSpeed === 0 && r.z.vz === 0 && r.a.progress === r.z.progress && r.z.progress === 0 && r.z.pos.z === 8);
+  check(`10 MANUAL_HOLD ${IDLE / 1000}s after takeoff: position/alt/progress frozen, velocity 0`, r.z.state === 'MANUAL_HOLD' && r.a.k === r.z.k && r.z.groundSpeed === 0 && r.z.vz === 0 && r.a.progress === r.z.progress && r.z.progress === 0 && r.z.pos.z === 12);
   check('11 hold: mission clock T+ keeps running, sensor shown as held', r.z.missionTime > r.a.missionTime + IDLE / 1000 - 1 && r.z.sensor === 'HOLD');
   check('   hold shown as a compact chip', chip.includes('MANUAL HOLD') && chip.includes('AIRCRAFT STATIONARY'));
   check('   in hold START, RECALCULATE and NEW ENVIRONMENT are disabled; RESET available', (await btn('START MISSION').isDisabled()) && (await btn('RECALCULATE').isDisabled()) && (await btn('NEW ENVIRONMENT').isDisabled()) && !(await btn('RESET').isDisabled()));
   await shot('hold');
   // 9 one telemetry source
-  const tele = await p.evaluate(() => ({ tape: document.querySelector('.alt-ptr b').textContent, panel: document.querySelector('.pos.alt b').textContent, label: [...document.querySelectorAll('[data-ov=label-drone] text')].map((t) => t.textContent).join(' '), stem: document.querySelector('[data-ov=label-stem] text').textContent }));
-  check('9 tape / panel / drone label / stem tag show identical altitude', tele.tape === '8.0' && tele.panel === '8.0' && tele.label.includes('ALT 8.0 m') && tele.stem === '8.0 m', JSON.stringify(tele));
+  const tele = await p.evaluate(() => ({ tape: document.querySelector('.alt-ptr b').textContent, panel: document.querySelector('.pos.alt b').textContent, label: document.querySelector('[data-ov=label-drone]').textContent, stem: document.querySelector('[data-ov=label-alt]').textContent }));
+  check('9 tape / panel / drone label / stem tag show identical altitude', tele.tape === '12.0' && tele.panel === '12.0' && tele.label.includes('ALT 12.0 m') && tele.stem === '12.0 m', JSON.stringify(tele));
   // 12 RESUME AUTO, PAUSE and Space are denied while held
   const k0 = (await S()).k;
   const deny = async (sel) => { await p.locator(sel).click(); return (await p.locator('[data-testid=restricted-alert]').textContent({ timeout: 1500 }).catch(() => '')).includes('COMMAND DENIED'); };
@@ -117,7 +117,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(500);
   const h2 = await S();
   r = await idle('second hold');
-  check('17 second mission: countdown → takeoff → automatic hold again at 8 m, stationary', ok17 && h2.pos.z === 8 && h2.pos.x === 0 && h2.pos.y === 0 && r.a.k === r.z.k && r.z.state === 'MANUAL_HOLD');
+  check('17 second mission: countdown → takeoff → automatic hold again at 12 m, stationary', ok17 && h2.pos.z === 12 && h2.pos.x === 0 && h2.pos.y === 0 && r.a.k === r.z.k && r.z.state === 'MANUAL_HOLD');
   // 18 duplicate timers / loops
   const ints = await p.evaluate(() => window.__intervals());
   const lpf = await loopsPerFrame();

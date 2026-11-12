@@ -11,9 +11,8 @@
     "test:e2e": "node tests/e2e.cjs",
     "test:restricted": "node tests/restricted.cjs",
     "test:takeoff": "node tests/takeoff-hold.cjs",
-    "test:site": "node tests/site.cjs",
     "test:layout": "node tests/layout.cjs",
-    "test:photo": "node tests/photo-view.cjs"
+    "test:scene": "node tests/scene3d.cjs"
   },
   "dependencies": {
     "@fontsource/inter": "^5.1.0",

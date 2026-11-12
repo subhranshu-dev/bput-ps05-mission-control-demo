@@ -7,7 +7,7 @@ const OUT = process.env.OUT || '';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 (async () => {
-  const b = await chromium.launch({ executablePath: process.env.CHROME || '/usr/bin/google-chrome', headless: true });
+  const b = await chromium.launch({ executablePath: process.env.CHROME || '/usr/bin/google-chrome', headless: true, args: [...(process.env.GL === 'swiftshader' ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : ['--use-angle=gl']), '--ignore-gpu-blocklist'] });
   let fails = 0; const errs = [];
   // 1920×1080 at 100/125/150 % → 1920×1080, 1536×864, 1280×720 CSS px; 1366×768 at 100/125 % → 1366×768, 1093×614
   for (const [w, h] of [[1280, 720], [1366, 768], [1536, 864], [1920, 1080], [1093, 614]]) {

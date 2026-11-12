@@ -250,6 +250,9 @@ export class Engine {
 
   /** Real site (photo) mode when given a SiteConfig; synthetic generated world when given a seed. */
   site: SiteConfig | null = null;
+  climbV = 0; // takeoff climb speed state (site mode ease-in/out)
+  /** Takeoff / cruise altitude: the site's configured target altitude, else the generated-world default. */
+  get cruiseAlt() { return this.site ? this.site.targetAltitudeM : CRUISE_ALT; }
   startPt = { x: START.x, z: START.z };
   goalPt = { x: GOAL.x, z: GOAL.z };
 
@@ -451,7 +454,7 @@ export class Engine {
     if (this.state === 'STANDBY') {
       const plan = this.plan(this.startPt.x, this.startPt.z);
       if (!plan) return false;
-      this.setRoute(plan.points, plan.expanded, CRUISE_ALT, CRUISE_ALT, 'RECALCULATED', this.route.rev + 1);
+      this.setRoute(plan.points, plan.expanded, this.cruiseAlt, this.cruiseAlt, 'RECALCULATED', this.route.rev + 1);
       this.addLog('ok', `Route R${this.route.rev} · ${this.waypoints.length - 1} waypoints · ${this.planLength.toFixed(1)} m`);
       this.emit('route');
       return true;
@@ -472,7 +475,7 @@ export class Engine {
     const plan = this.plan(this.pos.x, this.pos.z);
     if (!plan) return false;
     // keep current altitude if above cruise (never descend onto obstacle tops); climb to cruise if below
-    const cruise = THREE.MathUtils.clamp(this.pos.y, CRUISE_ALT, MAX_ALT);
+    const cruise = THREE.MathUtils.clamp(this.pos.y, this.cruiseAlt, MAX_ALT);
     const keepSpeed = this.state === 'AUTONOMOUS_TRANSIT' ? this.speed : 0;
     this.setRoute(plan.points, plan.expanded, this.pos.y, cruise, 'RECALCULATED', this.route.rev + 1);
     this.speed = keepSpeed;
@@ -481,7 +484,8 @@ export class Engine {
 
   /** Restores a freshly-proceeded STANDBY. Called on RESET and environment load. */
   private resetFlight() {
-    this.setRoute(this.basePlan, this.baseExpanded, CRUISE_ALT, CRUISE_ALT, 'INITIAL', 1);
+    this.setRoute(this.basePlan, this.baseExpanded, this.cruiseAlt, this.cruiseAlt, 'INITIAL', 1);
+    this.climbV = 0;
     this.resumeTo = null;
     this.countdown = 0;
     this.pos.set(this.startPt.x, 0, this.startPt.z);
@@ -512,7 +516,7 @@ export class Engine {
     const w = this.world;
     if (this.site) {
       this.addLog('ok', `Site ready · Point 1 (start) → Point 2 (destination) · ${this.planLength.toFixed(1)} m${this.site.distanceIsEstimate ? ' (photo estimate)' : ''}`);
-      this.addLog('info', `Route R1 · direct · cruise ${CRUISE_ALT.toFixed(1)} m · takeoff ends in position hold`);
+      this.addLog('info', `Route R1 · direct · takeoff to ${this.cruiseAlt.toFixed(1)} m · then position hold`);
     } else {
       this.addLog('ok', `Environment ready · seed ${w.seed} · ${w.obstacles.length} obstacles · ${w.cloud.count.toLocaleString()} LiDAR points`);
       this.addLog('info', `Route R1 · ${this.waypoints.length - 1} waypoints · ${this.planLength.toFixed(1)} m · cruise ${CRUISE_ALT.toFixed(1)} m`);
@@ -577,9 +581,13 @@ export class Engine {
 
     if (st === 'TAKEOFF') {
       const target = this.waypoints[0].y;
-      const vy = this.site // real site: configured climb rate with a short ease-in at the top
-        ? Math.min(this.site.climbRateMps, Math.max(0.5, (target - this.pos.y) * 3))
-        : Math.min(MAX_VZ, Math.max(0.4, (target - this.pos.y) * 1.2));
+      let vy: number;
+      if (this.site) { // smooth ease-in/out climb: accelerate at 1 m/s² to the configured rate, decelerate to the target
+        const A = 1.0, rem = Math.max(0, target - this.pos.y);
+        const vT = Math.min(this.site.climbRateMps, Math.sqrt(2 * A * rem));
+        this.climbV += THREE.MathUtils.clamp(vT - this.climbV, -2 * A * dt, A * dt);
+        vy = rem < 0.003 ? rem / dt : Math.max(0.03, this.climbV);
+      } else vy = Math.min(MAX_VZ, Math.max(0.4, (target - this.pos.y) * 1.2));
       this.pos.y = Math.min(target, this.pos.y + vy * dt);
     } else if (st === 'AUTONOMOUS_TRANSIT') {
       const L = this.planLength;

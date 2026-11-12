@@ -3,6 +3,7 @@ import { ArrowRight, Check } from 'lucide-react';
 import { Btn, Logo, f1 } from './ui';
 import { INIT_CHECK_COUNT, MAX_ALT, CRUISE_SPEED, SENSOR_RANGE, SCAN_HZ, Snapshot } from '../sim/engine';
 import { CRUISE_ALT, GRID_RES, PLAN_CLEARANCE, WORLD_HALF } from '../sim/world';
+import { SITE } from '../sim/site';
 
 export const missionId = (seed: number) => `AEG-${String(seed).padStart(4, '0')}`;
 
@@ -24,12 +25,12 @@ export function Welcome({ onInitialize }: { onInitialize: () => void }) {
 export function Initializing({ snap, onContinue }: { snap: Snapshot; onContinue: () => void }) {
   const webgl = useMemo(() => { try { const c = document.createElement('canvas'); return !!(c.getContext('webgl2') || c.getContext('webgl')); } catch { return false; } }, []);
   const checks: [string, string][] = snap.site ? [
-    ['Site photograph', '648 × 1152 · static'],
-    ['Point 1 / Point 2', 'registered from photo'],
-    ['Flight model', `${CRUISE_SPEED} m/s cruise`],
+    ['Site photograph', `${SITE.photo.width} × ${SITE.photo.height} · static`],
+    ['Depth + calibration', 'offline · P1/P2 anchored'],
+    ['Flight model', `takeoff ${SITE.climbRateMps} m/s · hold`],
     ['Route planner', 'direct P1 → P2'],
     ['Telemetry', '10 Hz'],
-    ['Renderer', 'SVG overlay'],
+    ['Renderer', webgl ? 'WebGL 2.5D' : 'WebGL unavailable'],
   ] : [
     ['Environment generator', `seed ${snap.seed}`],
     ['LiDAR model', `${SENSOR_RANGE} m · ${SCAN_HZ} Hz`],
@@ -76,12 +77,12 @@ export function Initializing({ snap, onContinue }: { snap: Snapshot; onContinue:
 export function Briefing({ snap, onProceed }: { snap: Snapshot; onProceed: () => void }) {
   const est = snap.site?.estimated ? ' (photo estimate)' : '';
   const rows: [string, string][] = snap.site ? [
-    ['Objective', `Autonomous takeoff at Point 1 to ${CRUISE_ALT.toFixed(1)} m AGL, then automatic position hold. Point 2 is the navigation reference; the aircraft does not travel there automatically.`],
-    ['Environment', 'Real test-site photograph — static reference image, not a live feed'],
+    ['Objective', `Autonomous takeoff at Point 1 to ${snap.route.cruiseAlt.toFixed(1)} m AGL, then automatic position hold. Point 2 is the navigation reference; the aircraft does not travel there automatically.`],
+    ['Environment', `Real test-site photograph (${SITE.photo.sourceSize.join(' × ')} original) as a 2.5D depth scene — static, not a live feed; DAY view is a grade of the night photo`],
     ['Start', 'Point 1 — near white pillar (launch position)'],
     ['Destination', `Point 2 — far white pillar · ${snap.site.distanceM.toFixed(1)} m from Point 1${est}`],
     ['Route', `${snap.waypointCount} waypoint${snap.waypointCount === 1 ? '' : 's'} · direct · ${f1(snap.planLength)} m`],
-    ['Altitude', `Takeoff to ${CRUISE_ALT.toFixed(1)} m AGL · ceiling ${MAX_ALT} m`],
+    ['Altitude', `Takeoff to ${snap.route.cruiseAlt.toFixed(1)} m AGL at ${SITE.climbRateMps} m/s · ceiling ${MAX_ALT} m`],
     ['Manual flight', 'Restricted · commands are denied and the aircraft is held'],
     ['Navigation', 'GPS denied · local frame, 000° = bearing Point 1 → Point 2'],
     ['Telemetry', 'Virtual aircraft (synthetic) — no live hardware or sensor data'],

@@ -560,3 +560,35 @@ h1, h2, h3 { margin: 0; }
   .dock-g.link .btn { font-size: 9.5px; padding: 0 2px; letter-spacing: 0; }
 }
 @media (max-width: 1180px) and (min-width: 1000px) { .dock-g.flight .btn { font-size: 9.5px; } }
+
+/* ---------------------------------------------------------------- 2.5D WebGL site scene */
+.scene3d { position: absolute; inset: 0; overflow: hidden; z-index: 0; isolation: isolate; }
+.scene3d canvas { display: block; touch-action: none; }
+.scene3d::after { content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 1; transition: background 1s ease; background: radial-gradient(ellipse at 50% 55%, transparent 52%, rgba(3, 5, 10, .62) 100%); }
+.scene3d[data-mode="day"]::after { background: radial-gradient(ellipse at 50% 55%, transparent 62%, rgba(10, 16, 24, .32) 100%); }
+.labels3d { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+.l3-wrap { position: absolute; width: 0; height: 0; }
+.l3 { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; gap: 2px; white-space: nowrap; padding: 5px 9px; border-radius: 6px; background: rgba(8, 13, 21, .84); border: 1px solid rgba(148, 178, 214, .35); font: 500 11px var(--mono); color: #e7edf5; backdrop-filter: blur(3px); }
+.l3 b { font-weight: 700; letter-spacing: .06em; font-size: 11.5px; }
+.l3 span { color: #b4c1d1; font-size: 10.5px; }
+.l3 em { color: var(--amber); font-style: normal; }
+.l3-p1 { border-color: rgba(56, 214, 245, .75); } .l3-p1 b { color: #7fe3f8; }
+.l3-p2 { border-color: rgba(251, 191, 36, .8); } .l3-p2 b { color: #fcd34d; }
+.l3-drone { border-color: rgba(56, 214, 245, .55); }
+.l3-alt { padding: 2px 7px; font-weight: 700; font-size: 11px; }
+.l3-route { padding: 3px 8px; font-size: 10.5px; color: #cfeaff; }
+.l3-callout { border-color: rgba(56, 214, 245, .9); background: rgba(6, 18, 28, .92); box-shadow: 0 0 24px rgba(56, 214, 245, .22); }
+.l3-leader { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; }
+.l3-leader line { stroke: rgba(207, 234, 251, .6); stroke-width: 1.2; }
+.rx-alert.rx-toast.left { right: auto; left: 14px; }
+.q-btn { width: auto; padding: 0 8px; gap: 5px; display: inline-flex; align-items: center; font-size: 10.5px; font-weight: 600; letter-spacing: .04em; }
+.mode-btn { color: var(--amber); }
+@media (max-width: 1400px) { .q-btn span { display: none; } }
+/* hold chip + 5-button camera toolbar must never collide */
+.hold-chip { max-width: calc(100% - 500px); }
+@media (max-width: 1600px) {
+  .vp-cams .seg { padding: 0 7px; font-size: 10.5px; gap: 4px; }
+  .hold-chip { height: auto; min-height: 28px; padding: 5px 11px; flex-wrap: wrap; row-gap: 1px; white-space: normal; border-radius: 10px; max-width: calc(100% - 410px); }
+  .hold-chip span:last-child { flex-basis: 100%; font-size: 10px; }
+}
+@media (max-width: 1600px) { .rx-alert.rx-toast { width: min(300px, calc(100% - 28px)); } .rx-toast .rx-l1 { font-size: 14px; } .rx-toast .rx-icon { width: 34px; height: 34px; } }

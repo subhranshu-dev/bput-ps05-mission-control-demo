@@ -330,22 +330,18 @@ test('RESTRICTED: forces hold from TAKEOFF, LANDING, ROUTE_BLOCKED and PAUSED-in
 });
 
 // ---------------------------------------------------------------- real test site (photo) mode
-import { SITE, droneImagePoint } from '../src/sim/site';
+import { SITE, projectToPhoto, P1W, P2W, LAUNCH } from '../src/sim/site';
 
-test('SITE: config — native landscape photo, registered points, drone box never overlaps Point 2 at 8 m', () => {
-  assert.deepEqual([SITE.photo.width, SITE.photo.height], [1280, 684]);
-  assert.ok(SITE.p1.base.x > SITE.p2.base.x + 600, 'pillars clearly separated left/right');
-  const d = droneImagePoint(8);
-  assert.equal(d.x, SITE.groundAnchor.x); // straight up in screen space
-  assert.equal(d.y, SITE.groundAnchor.y - 8 * SITE.altitudePxPerM);
-  const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
-  assert.ok(dist(d, SITE.p1.base) < dist(d, SITE.p2.base) / 2, 'drone clearly closer to P1 than to P2');
-  for (const iconImgPx of [72, 96, 128]) { // icon size in image px at small display scales too
-    const h = iconImgPx / 2;
-    const p2 = SITE.p2.box;
-    const overlap = d.x - h < p2.x1 && p2.x0 < d.x + h && d.y - h < p2.y1 && p2.y0 < d.y + h;
-    assert.equal(overlap, false, `drone box (${iconImgPx}px) overlaps P2`);
-  }
+test('SITE: calibration — P1/P2 3D anchors reproject onto the measured pillar bases within 6 px', () => {
+  assert.deepEqual(SITE.photo.sourceSize, [1280, 684]);
+  const e1 = projectToPhoto(P1W as [number, number, number])!, e2 = projectToPhoto(P2W as [number, number, number])!;
+  const d1 = Math.hypot(e1.x - SITE.calib.p1.base[0], e1.y - SITE.calib.p1.base[1]);
+  const d2 = Math.hypot(e2.x - SITE.calib.p2.base[0], e2.y - SITE.calib.p2.base[1]);
+  assert.ok(d1 < 6 && d2 < 6, `P1 ${d1.toFixed(2)} px, P2 ${d2.toFixed(2)} px`);
+  assert.ok(Math.abs(Math.hypot(P1W[0] - P2W[0], P1W[2] - P2W[2]) - SITE.p1p2DistanceM) < 0.05, 'P1–P2 distance matches config');
+  // launch point is clear of the Point 1 pole and the drone column never reaches Point 2
+  assert.ok(Math.hypot(LAUNCH[0] - P1W[0], LAUNCH[2] - P1W[2]) > 0.8);
+  assert.ok(Math.hypot(LAUNCH[0] - P2W[0], LAUNCH[2] - P2W[2]) > 20);
 });
 
 test('SITE: direct Point 1 → Point 2 route, no synthetic obstacles or LiDAR cloud, fixed environment', () => {
@@ -361,16 +357,17 @@ test('SITE: direct Point 1 → Point 2 route, no synthetic obstacles or LiDAR cl
   assert.equal(e.newEnvironment(), false);
 });
 
-test('SITE: takeoff at Point 1 → automatic hold at 8 m; 60 s stationary; 8 commands denied; never travels to Point 2', () => {
+test('SITE: takeoff at Point 1 → automatic hold at 12 m; 60 s stationary; 8 commands denied; never travels to Point 2', () => {
   const e = toStandby(new Engine(SITE));
   e.dispatch('START');
   const seen = new Set<string>();
   until(e, () => { seen.add(e.state); return e.state === 'MANUAL_HOLD'; }, 30, 0.01);
   assert.deepEqual([...seen], ['COUNTDOWN', 'TAKEOFF', 'MANUAL_HOLD']);
   const s = e.snapshot();
-  assert.deepEqual([s.pos.x, s.pos.y, s.pos.z], [0, 0, 8]);
+  assert.deepEqual([s.pos.x, s.pos.y, s.pos.z], [0, 0, 12]);
+  assert.equal(SITE.targetAltitudeM, 12);
   assert.equal(s.heading, 0); assert.equal(s.groundSpeed, 0); assert.equal(s.vz, 0); assert.equal(s.yawRate, 0);
-  assert.equal(s.progress, 0); assert.equal(s.routeFlown, 0); assert.equal(s.traveled, 8);
+  assert.equal(s.progress, 0); assert.equal(s.routeFlown, 0); assert.ok(Math.abs(s.traveled - 12) < 1e-9);
   assert.ok(Math.abs(s.distToGoal - SITE.distanceM) < 1e-9);
   const f0 = frozen(e);
   e.advance(60);
@@ -380,16 +377,17 @@ test('SITE: takeoff at Point 1 → automatic hold at 8 m; 60 s stationary; 8 com
   assert.equal(e.state, 'MANUAL_HOLD');
 });
 
-test('SITE: takeoff uses the configured climb rate (1.5 m/s → 5–6 s); clock runs in hold; RESUME AUTO / PAUSE denied while held', () => {
+test('SITE: smooth ease-in/out climb at the configured 1.5 m/s (≈ 9.5 s to 12 m); clock runs in hold; RESUME AUTO / PAUSE denied while held', () => {
   const e = toStandby(new Engine(SITE));
   assert.equal(SITE.climbRateMps, 1.5);
   e.dispatch('START');
   until(e, () => e.state === 'TAKEOFF', 10, 0.01);
   const t0 = e.missionTime;
-  e.advance(1); assert.ok(Math.abs(e.snapshot().vz - 1.5) < 1e-6, `vz ${e.snapshot().vz}`);
+  e.advance(0.5); const v05 = e.snapshot().vz; e.advance(2); const v25 = e.snapshot().vz;
+  assert.ok(v05 > 0.3 && v05 < 0.8, `eases in: vz ${v05}`); assert.ok(Math.abs(v25 - 1.5) < 1e-6, `cruise climb vz ${v25}`);
   until(e, () => e.state === 'MANUAL_HOLD', 30, 0.01);
   const climb = e.missionTime - t0;
-  assert.ok(climb > 5 && climb < 6.2, `climb took ${climb.toFixed(2)} s`);
+  assert.ok(climb > 9 && climb < 10.5, `climb took ${climb.toFixed(2)} s`);
   const f0 = frozen(e), tm = e.missionTime;
   assert.equal(e.allowed('RESUME_AUTO'), false); assert.equal(e.allowed('PAUSE'), false);
   assert.equal(e.dispatch('RESUME_AUTONOMY'), false); assert.equal(e.dispatch('PAUSE'), false);

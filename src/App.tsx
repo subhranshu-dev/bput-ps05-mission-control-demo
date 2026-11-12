@@ -3,8 +3,9 @@ import {
   Activity, ArrowDown, ArrowUp, ChevronsDown, ChevronsUp, Clock, Hand, Layers, Lock,
   Map as MapIcon, Maximize2, Minimize2, Pause, Play, RotateCcw, RotateCw, Route, ScrollText,
   ShieldAlert, Shuffle, Target, Volume2, VolumeX, X, Navigation, ArrowLeft, ArrowRight, OctagonAlert,
+  Sun, Moon, Gauge as GaugeIcon, Video, Orbit, Crosshair,
 } from 'lucide-react';
-import PhotoScene, { PhotoView } from './components/PhotoScene';
+import Scene3D, { CamPreset, Mode, Quality, sceneInfo } from './components/Scene3D';
 import { SITE } from './sim/site';
 import MiniMap from './components/MiniMap';
 import { Btn, Logo, Metric, f1, fmtClock } from './components/ui';
@@ -33,7 +34,7 @@ function useClock() {
 }
 
 // ---------------------------------------------------------------- header
-function Header({ snap, fs, onFs, muted, onMute }: { snap: Snapshot; fs: boolean; onFs: () => void; muted: boolean; onMute: () => void }) {
+function Header({ snap, fs, onFs, muted, onMute, mode, onMode, quality, onQuality }: { snap: Snapshot; fs: boolean; onFs: () => void; muted: boolean; onMute: () => void; mode: Mode; onMode: () => void; quality: string; onQuality: () => void }) {
   const now = useClock();
   const tone = STATE_TONE[snap.state];
   return (
@@ -49,6 +50,8 @@ function Header({ snap, fs, onFs, muted, onMute }: { snap: Snapshot; fs: boolean
         <div className={`state-chip ${tone}`} data-testid="state-chip"><span className="dot" />{STATE_LABEL[snap.state]}</div>
         <div className="hd-item time"><Clock size={14} /><span className="mono">{now.toLocaleTimeString([], { hour12: false })}</span></div>
         <span className="disclosure" title="All data on this console is generated in the browser. There is no vehicle link.">SYNTHETIC DATA</span>
+        <button type="button" className="icon-btn mode-btn" data-testid="mode-toggle" onClick={(e) => { if (e.detail) e.currentTarget.blur(); onMode(); }} title={mode === 'night' ? 'Switch to DAY view' : 'Switch to NIGHT view'} aria-label="Toggle day / night">{mode === 'night' ? <Moon size={16} /> : <Sun size={16} />}</button>
+        <button type="button" className="icon-btn q-btn" data-testid="quality-toggle" onClick={(e) => { if (e.detail) e.currentTarget.blur(); onQuality(); }} title={`Render quality: ${quality} (click to change)`} aria-label="Render quality"><GaugeIcon size={14} /><span>{quality}</span></button>
         <button type="button" className="icon-btn" onClick={(e) => { if (e.detail) e.currentTarget.blur(); onMute(); }} title={muted ? 'Unmute sounds (M)' : 'Mute sounds (M)'} aria-label={muted ? 'Unmute' : 'Mute'}>{muted ? <VolumeX size={16} /> : <Volume2 size={16} />}</button>
         <button type="button" className="icon-btn" onClick={(e) => { if (e.detail) e.currentTarget.blur(); onFs(); }} title={fs ? 'Exit fullscreen (Esc)' : 'Enter fullscreen'} aria-label="Toggle fullscreen">{fs ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
       </div>
@@ -122,9 +125,9 @@ function AltitudeTape({ alt, target, vz }: { alt: number; target: number; vz: nu
 }
 
 /** Red COMMAND DENIED alert for restricted manual flight commands (UI only; ~3 s; never touches the engine). */
-function RestrictedAlert({ cmd, leaving, count }: { cmd: string; leaving: boolean; count: number }) {
+function RestrictedAlert({ cmd, leaving, count, side }: { cmd: string; leaving: boolean; count: number; side: 'right' | 'left' }) {
   return (
-    <div className={`rx-alert rx-toast ${leaving ? 'out' : ''}`} role="alert" aria-live="assertive" data-testid="restricted-alert">
+    <div className={`rx-alert rx-toast ${side} ${leaving ? 'out' : ''}`} role="alert" aria-live="assertive" data-testid="restricted-alert">
       <div className="rx-scan" aria-hidden="true" />
       <div className="rx-icon"><OctagonAlert size={24} strokeWidth={1.8} /></div>
       <div className="rx-text">
@@ -155,7 +158,14 @@ export default function App() {
   const { snap, log } = useEngineSnapshot(engine);
   const [fs, setFs] = useState(false);
   const [muted, setMuted] = useState(false);
-  const [photoView, setPhotoView] = useState<PhotoView>('full');
+  const [preset, setPreset] = useState<CamPreset>('AUTO');
+  const store = { get: (k: string) => { try { return window.localStorage.getItem(k); } catch { return null; } }, set: (k: string, v: string) => { try { window.localStorage.setItem(k, v); } catch { /* storage unavailable */ } } };
+  const [mode, setMode] = useState<Mode>(() => (store.get('aegis.mode') === 'day' ? 'day' : 'night'));
+  const [qualityPref, setQualityPref] = useState<'auto' | 'high' | 'low'>(() => { const q = store.get('aegis.quality'); return q === 'high' || q === 'low' ? q : 'auto'; });
+  const [qualityNow, setQualityNow] = useState<{ q: Quality; auto: boolean }>({ q: 'high', auto: true });
+  const vpRef = useRef<HTMLDivElement>(null);
+  const toggleMode = useCallback(() => setMode((m) => { const n = m === 'night' ? 'day' : 'night'; store.set('aegis.mode', n); return n; }), []);
+  const cycleQuality = useCallback(() => setQualityPref((q) => { const n = q === 'auto' ? 'high' : q === 'high' ? 'low' : 'auto'; store.set('aegis.quality', n); return n; }), []);
   const [camToken, setCamToken] = useState(0);
   const [denied, setDenied] = useState<string | null>(null);
   const [summaryClosed, setSummaryClosed] = useState(false);
@@ -255,7 +265,7 @@ export default function App() {
         return; // Space never starts a mission
       }
       if (KEYMAP[key]) { e.preventDefault(); handleRestrictedFlightCommand(KEYMAP[key]); return; }
-      if (key === 'c') setCamToken((x) => x + 1);
+      if (key === 'c') { setPreset('AUTO'); setCamToken((x) => x + 1); }
       if (key === 'm') toggleMute();
     };
     window.addEventListener('keydown', onKey);
@@ -264,6 +274,14 @@ export default function App() {
 
   const st = snap.state;
   const effective = st === 'PAUSED' ? snap.resumeTo ?? 'STANDBY' : st;
+  /** The denial toast sits top-right unless the drone is there on screen; then it moves top-left. */
+  const toastSide = (): 'right' | 'left' => {
+    const vw = vpRef.current?.clientWidth ?? 1200, d = sceneInfo.droneBox;
+    if (!d) return 'right';
+    const tw = vw <= 1600 - 600 ? Math.min(300, vw - 28) : (window.innerWidth <= 1600 ? 300 : 390);
+    const right = { x0: vw - 14 - tw, y0: 50, x1: vw - 14, y1: 170 };
+    return d.x0 < right.x1 && right.x0 < d.x1 && d.y0 < right.y1 && right.y0 < d.y1 ? 'left' : 'right';
+  };
   const ok = (a: Action) => engine.allowed(a); // single action-availability matrix (engine ACTIONS)
   const hold = st === 'MANUAL_HOLD';
   const rxOk = engine.restrictedAvailable();
@@ -272,7 +290,7 @@ export default function App() {
 
   return (
     <div className={`app stage-${stage}`} data-state={st}>
-      {stage !== 'welcome' && <Header snap={snap} fs={fs} onFs={toggleFs} muted={muted} onMute={toggleMute} />}
+      {stage !== 'welcome' && <Header snap={snap} fs={fs} onFs={toggleFs} muted={muted} onMute={toggleMute} mode={mode} onMode={toggleMode} quality={qualityPref === 'auto' ? `AUTO·${qualityNow.q.toUpperCase()}` : qualityPref.toUpperCase()} onQuality={cycleQuality} />}
       {stage === 'welcome' && <Welcome onInitialize={() => send('INITIALIZE')} />}
       {stage === 'init' && <Initializing snap={snap} onContinue={() => send('CONTINUE')} />}
       {stage === 'brief' && <Briefing snap={snap} onProceed={() => send('PROCEED')} />}
@@ -285,18 +303,18 @@ export default function App() {
           </aside>
 
           <section className="center" aria-label="3D environment">
-            <div className="viewport">
-              <div className="photo-backdrop" style={{ backgroundImage: `url(${SITE.photo.src})` }} aria-hidden="true" />
-              <PhotoScene snap={snap} view={photoView} resetToken={camToken} />
+            <div className="viewport" ref={vpRef} data-mode={mode}>
+              <Scene3D engine={engine} snap={snap} mode={mode} preset={preset} presetToken={camToken} qualityPref={qualityPref}
+                onQuality={(q, auto) => setQualityNow({ q, auto })} onPreset={(p) => { setPreset(p); setCamToken((x) => x + 1); }} />
               {hold
                 ? <div className="hold-chip" role="status" data-testid="hold-chip"><span className="dot" /><b>MANUAL HOLD</b><span>AUTONOMY SUSPENDED · AIRCRAFT STATIONARY</span></div>
                 : <div className="vp-tag"><span className="dot" />REAL SITE PHOTO · SYNTHETIC TELEMETRY</div>}
-              <div className="vp-cams" role="group" aria-label="View">
-                {([['full', 'Full', Layers], ['drone', 'Drone', Target]] as const).map(([m, l, Icon]) => (
-                  <button key={m} type="button" className={`seg ${photoView === m ? 'on' : ''}`} aria-pressed={photoView === m} title={`${l} view`}
-                    onClick={(e) => { if (e.detail) e.currentTarget.blur(); setPhotoView(m); setCamToken((x) => x + 1); }}><Icon size={14} />{l}</button>
+              <div className="vp-cams" role="group" aria-label="Camera">
+                {([['WIDE', Layers], ['FOLLOW', Video], ['ORBIT', Orbit], ['TACTICAL', Crosshair]] as const).map(([m, Icon]) => (
+                  <button key={m} type="button" className={`seg ${preset === m ? 'on' : ''}`} aria-pressed={preset === m} data-preset={m} title={`${m} camera`}
+                    onClick={(e) => { if (e.detail) e.currentTarget.blur(); setPreset(m); setCamToken((x) => x + 1); }}><Icon size={14} />{m}</button>
                 ))}
-                <button type="button" className="seg" title="Reset view (C)" onClick={(e) => { if (e.detail) e.currentTarget.blur(); setPhotoView('full'); setCamToken((x) => x + 1); }}><RotateCcw size={14} />Reset</button>
+                <button type="button" className={`seg ${preset === 'AUTO' ? 'on' : ''}`} data-preset="RESET" title="Reset to the automatic cinematic camera (C / double-click)" onClick={(e) => { if (e.detail) e.currentTarget.blur(); setPreset('AUTO'); setCamToken((x) => x + 1); }}><RotateCcw size={14} />{preset === 'AUTO' ? 'AUTO' : 'RESET'}</button>
               </div>
               <AltitudeTape alt={snap.pos.z} target={snap.route.cruiseAlt} vz={snap.vz} />
               <div className="vp-hud">
@@ -318,7 +336,7 @@ export default function App() {
               )}
               {showProx && <div className="prox-banner" role="status">Proximity advisory · {snap.nearest!.id} · {snap.nearest!.dist.toFixed(1)} m</div>}
               {toast && <div className={`toast ${toast.tone}`} role="status">{toast.msg}</div>}
-              {rx && <RestrictedAlert cmd={rx.cmd} leaving={rx.leaving} count={rx.n} />}
+              {rx && <RestrictedAlert cmd={rx.cmd} leaving={rx.leaving} count={rx.n} side={toastSide()} />}
             </div>
 
             <div className="dock">
